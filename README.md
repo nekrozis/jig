@@ -156,12 +156,18 @@ privilege, `5` lock contention.
 4. reject `templates\` as a target (it would replay the same forward, and `templates\.ref`
    does not exist)
 5. write the template to `templates\`
-6. create `.ref\<name>.exe.tmp.<rand>`, then rename it onto `.ref\<name>.exe`
-7. link the template into `bin\<name>.exe` (copy if linking is unavailable)
-8. append the manifest record
+6. refuse to replace a `bin\<name>.exe` that jig did not write, unless `--force`
+7. create `.ref\<name>.exe.tmp.<rand>`, then rename it onto `.ref\<name>.exe`
+8. link the template into `bin\<name>.exe` (copy if linking is unavailable)
+9. append the manifest record
 
-Steps 6 and 7 are in that order because visibility must mean usability: the instant
+Steps 7 and 8 are in that order because visibility must mean usability: the instant
 `bin\<name>.exe` exists, the user can invoke it.
+
+Step 6 is the third face of one rule, because `bin\` may be shared with another package
+manager: a file whose digest matches no template is not jig's. `check` reports it as
+`foreign` and never deletes it, `rm` refuses to delete it, and `add` refuses to replace it.
+The refusal happens before `.ref` is written, so it leaves the tree exactly as it was.
 
 ### What `check` can repair
 

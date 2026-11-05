@@ -125,6 +125,17 @@ func addOne(l layout, name, target string, subsystem uint16, force bool) error {
 		}
 	}
 
+	// A file under bin that jig never wrote belongs to whoever put it there.
+	// bin is allowed to be shared with another package manager, so replacing it
+	// silently would destroy someone else's shim: the same reasoning that makes
+	// check leave such a file alone and rm refuse it. Checked before the .ref
+	// write so a refusal leaves nothing behind.
+	if got, err := fileSHA256(binPath); err == nil && !isShimBytes(got) && !force {
+		return fail(exitInvalid,
+			"%s already exists and was not written by jig (digest matches no template)\n"+
+				"  add --force if you really want to replace it", stripLong(binPath))
+	}
+
 	if _, err := os.Lstat(entry); err == nil {
 		if cur, err := resolveFinal(entry); err == nil && samePath(cur, target) {
 			linkOK = true

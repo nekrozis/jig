@@ -96,6 +96,18 @@ contains "13 foreign file is reported" "foreign" "$out"
 chk "13 foreign file is not deleted" "yes" "$([ -f "$bin/foreign.exe" ] && echo yes || echo no)"
 rm -f "$bin/foreign.exe"
 
+# 13b. add refuses to replace a file jig did not write, and refuses before
+#      touching .ref so a refusal cannot leave a half-written entry behind
+cp /c/Windows/System32/hostname.exe "$bin/taken.exe"
+before="$(sha256sum "$bin/taken.exe" | cut -c1-16)"
+"$JIG" --root "$R" add taken 'C:\Windows\System32\whoami.exe' >/dev/null 2>&1
+chk "13b add refuses to overwrite a foreign file" "3" "$?"
+chk "13b the foreign file is untouched" "$before" "$(sha256sum "$bin/taken.exe" | cut -c1-16)"
+chk "13b the refusal left no .ref entry" "no" "$([ -e "$bin/.ref/taken.exe" ] && echo yes || echo no)"
+"$JIG" --root "$R" add taken 'C:\Windows\System32\whoami.exe' --force >/dev/null 2>&1
+chk "13b --force does replace it" "0" "$?"
+"$JIG" --root "$R" rm taken >/dev/null 2>&1
+
 # 14. relative link is rewritten
 "$JIG" --root "$R" rm np >/dev/null 2>&1
 rm -f "$R/bin/.ref/whoami.exe"

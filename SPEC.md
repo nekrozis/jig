@@ -168,14 +168,21 @@ string, and never mixed with warnings on stdout.
 | 6 | create the skeleton and the root marker | exit 1 |
 | 7 | write the chosen template to `templates\` if the digest differs | exit 1 |
 | 8 | take the lock | exit 5 |
-| 9 | per name: check for an existing entry with the same target (idempotent) or a different one (`--force`) | exit 3 |
-| 10 | per name: create `.ref\<name>.exe.tmp.<rand>`, then `os.Rename` onto `.ref\<name>.exe` | exit 1 |
-| 11 | per name: link the template into `bin\<name>.exe` (copy when linking fails) | exit 1 |
-| 12 | per name: append the manifest record | exit 1 |
+| 9 | per name: refuse to replace a `bin\<name>.exe` whose digest matches no template (`--force` overrides) | exit 3 |
+| 10 | per name: check for an existing entry with the same target (idempotent) or a different one (`--force`) | exit 3 |
+| 11 | per name: create `.ref\<name>.exe.tmp.<rand>`, then `os.Rename` onto `.ref\<name>.exe` | exit 1 |
+| 12 | per name: link the template into `bin\<name>.exe` (copy when linking fails) | exit 1 |
+| 13 | per name: append the manifest record | exit 1 |
 
-Steps 9-11 run in that order for one reason: visibility must mean usability. The instant
+Steps 10-12 run in that order for one reason: visibility must mean usability. The instant
 `bin\<name>.exe` exists the user can invoke it, so every action that can fail happens
 first. Removal reverses this (section 9).
+
+Step 9 exists because `bin\` may be shared with another package manager, and the same rule
+governs all three commands: a file whose digest matches no template is not jig's. `check`
+reports it as `foreign` and never deletes it, `rm` refuses to delete it, and `add` refuses
+to replace it. The check runs before `.ref` is touched, so a refusal cannot leave a
+half-written entry behind - the tree is byte-identical afterwards.
 
 Every rename uses `os.Rename`, which is `MoveFileExW(MOVEFILE_REPLACE_EXISTING)` on
 Windows - atomic, no FFI. `writeAtomic` is `os.CreateTemp` + `Write` + `Chmod` + `Rename`,
@@ -328,6 +335,7 @@ Each item was executed against a real tree; `[x]` means observed, not assumed.
 | 11 | `add` a target inside `bin` | exit 3, cycle refused |
 | 12 | `rm` an unregistered name | exit 3, nothing deleted |
 | 13 | foreign executable in `bin` | `warn foreign`, never deleted by `--fix` |
+| 13b | `add` onto a name a foreign executable occupies | exit 3, file and `.ref` untouched; `--force` replaces |
 | 14 | relative `.ref` entry | `warn relative`, `--fix` rewrites absolute, shim still runs |
 | 15 | `jig.exe` inside `bin` | absent from `check` output, survives `--fix` |
 | 16 | `--root` vs `$JIG_ROOT` | `--root` wins |
