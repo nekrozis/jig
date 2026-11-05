@@ -1,0 +1,315 @@
+# jig - implementation specification
+
+> Companion to the runtime layer `github.com/nekrozis/wshim`. This document covers the
+> **install-time** tool only.
+>
+> Version: 2026-11-05, v4 (upstream binaries embedded, root decoupled from the executable).
+> Runtime: `nekrozis/wshim` **v0.2.0**, tag `v0.2.0`, commit
+> `9635fe2b46b5277aae17a7143cb97d7f64d39a07` (`src/lib.rs` + `src/ctrl.rs`).
+
+## 0. Fixed behaviour of the embedded template
+
+These are properties of the upstream binary. They are not negotiable; they are the reason
+the manager has to be strict.
+
+| Behaviour | Upstream implementation | Consequence for `jig` |
+| --- | --- | --- |
+| Reading `.ref` | `fs::read_link(link).unwrap()` | the entry **must** be a symlink and must exist |
+| Target legality | `assert!(target.is_absolute())` | a relative target cannot be written at all |
+| Failure mode | panic, `panic = "abort"` | exit code `0xC0000409`, no readable message, nothing on a GUI subsystem |
+| Forwarding | `Command::new(&target).args(skip(1)).status()` | target must be `.exe`; `.bat` is re-parsed by cmd |
+| Exit code | `process::exit(status.code().unwrap())` | `code()` is always `Some` on Windows |
+| Ctrl+C | `SetConsoleCtrlHandler(handler, 1)` returning TRUE | the shim does not die early; the child shares the console |
+| Recursion | **no protection of any kind** | cycle detection is entirely the manager's job |
+
+A contract violation is a silent abort, not an error message. Therefore:
+
+- the manager is the only line of defence, and every check happens before a byte is written;
+- a shim that fails at runtime produces no diagnostics, so `check` must be able to prove
+  the tree is coherent without running anything.
+
+## 1. Scope
+
+| Dimension | Decision |
+| --- | --- |
+| Role | the only program allowed to create, modify or delete shim structure |
+| When it runs | install, upgrade, uninstall, troubleshooting. **Never on the forwarding path** |
+| Language | Go 1.21+, standard library only (`syscall` only for `CreateFileW` locking) |
+| Distribution | one `jig.exe`; `go:embed` carries both templates (3.8 MB total) |
+| Root | `--root` > `$JIG_ROOT` > nearest `.jig-root` marker above `jig.exe` |
+| Not done | PATH editing, registry writes, version management, running anything |
+
+**Core claim**: concentrate all uncertainty and all validation on the write side, so the
+runtime is left with `read_link` and `spawn`.
+
+## 2. Disk contract
+
+```
+<root>\
+  .jig-root                     marker, contents "jig-root 1\n"
+  shim.db                       manifest: JSONL, append-only, never read at runtime
+  .lock                         held exclusively during mutations
+  templates\
+    wshim-c.exe                 console template
+    wshim-w.exe                 GUI template
+  bin\                          the only directory that goes on PATH
+    jig.exe                     optional
+    <name>.exe                  byte-identical copy of one template
+    .ref\
+      <name>.exe                absolute symlink -> the real program
+```
+
+The templates live in `assets/` in the source tree and are embedded at **compile time**.
+`templates\` is the **runtime** copy; it is byte-identical to the embedded bytes and is
+rewritten whenever the digest disagrees. An upgrade therefore needs no sidecar files:
+`check --fix` refreshes the on-disk templates.
+
+Three non-negotiables:
+
+1. A shim reads `<its own directory>\.ref\<its own file name>` and nothing else.
+2. That entry must reach a final executable without forming a cycle.
+3. `bin\` is the single PATH entry; no recursion, no extra directories.
+
+## 3. Link forms
+
+| Form | Cross-volume | Privilege | Can a shim read it | Verdict |
+| --- | --- | --- | --- | --- |
+| Symlink, file, absolute target | yes | Developer Mode | yes, `read_link` | **the only legal form** |
+| Hard link | no, same volume only | none | no, `read_link` returns 4390 | forbidden |
+| Text file | yes | none | no, upstream has no such branch | forbidden |
+| Junction | n/a | none | no, directory-level only | forbidden |
+
+- **Hard links cannot work**: `fs::read_link` reports `os error 4390`, so the shim never
+  obtains a target.
+- **There is no fallback.** The upstream implementation has no "read it as a text file"
+  branch, and adding one would introduce runtime open/read plus BOM and whitespace
+  handling, contradicting the zero-tolerance design.
+- **Privilege is detected, not guessed**: `CreateSymbolicLinkW` failing with
+  `1314 ERROR_PRIVILEGE_NOT_HELD` maps to exit code 4, with the two known ways out
+  (enable Developer Mode, or run once elevated). No silent downgrade.
+
+## 4. Root resolution
+
+`jig` never treats its own directory as the root. Package managers install tools wherever
+they like, and silently adopting that location would scatter `bin\`, `.ref\` and `shim.db`
+into a tree `jig` does not own.
+
+Resolution order, first match wins:
+
+1. `--root <dir>`
+2. `$JIG_ROOT`
+3. the nearest ancestor of the running `jig.exe` that contains a `.jig-root` file
+4. otherwise: exit code 2, with a message naming all three attempts
+
+Rule 3 exists so that "`jig` installed at `<root>\bin\jig.exe`" keeps working without a
+flag. It is a declared property of the tree, not an inference from the executable's
+location: a `jig` installed at `scoop\apps\jig\current\jig.exe` finds no marker and stops.
+
+`init` and every successful mutation create the marker, so a root that `jig` has written to
+is always self-describing afterwards.
+
+## 5. CLI
+
+```
+jig [--root <dir>] <subcommand> [args...]
+
+add     <name> <target> [--as <alias>]... [--force] [--allow-script]
+rm      <name>... [--force] [--keep-target]
+ls      [--json]
+check   [<name>...] [--fix] [--json]
+which   <name> [--json]
+gc      [--dry-run|--apply]
+path
+init    [--force]
+version [--json]
+```
+
+| Exit code | Meaning |
+| --- | --- |
+| 0 | success, including an idempotent no-op |
+| 1 | partial failure (some entries in a batch failed) |
+| 2 | usage error, including "cannot determine the root" |
+| 3 | invalid state (bad target, cycle, dangling link, inconsistent tree) |
+| 4 | missing privilege (cannot create the symlink) |
+| 5 | lock contention |
+
+`--json` output must always be machine-parseable: an object or an array, never a bare
+string, and never mixed with warnings on stdout.
+
+## 6. `add` sequence (order is not interchangeable)
+
+| # | Step | On failure |
+| --- | --- | --- |
+| 1 | validate every requested name (target name plus aliases), reject case-insensitive duplicates | exit 3 |
+| 2 | resolve the target with `filepath.EvalSymlinks` | `ENOENT` -> exit 3; a path that does not exist is never accepted |
+| 3 | inspect the target: regular file -> `.exe` -> PE -> machine -> subsystem | exit 3 |
+| 4 | cycle detection: a target inside `bin\` or `.ref\` means `a -> b -> a` | exit 3 |
+| 5 | reject a target inside `templates\` (replays the same forward; `templates\.ref` does not exist) | exit 3 |
+| 6 | create the skeleton and the root marker | exit 1 |
+| 7 | write the chosen template to `templates\` if the digest differs | exit 1 |
+| 8 | take the lock | exit 5 |
+| 9 | per name: check for an existing entry with the same target (idempotent) or a different one (`--force`) | exit 3 |
+| 10 | per name: create `.ref\<name>.exe.tmp.<rand>`, then `os.Rename` onto `.ref\<name>.exe` | exit 1 |
+| 11 | per name: write the shim copy to `bin\<name>.exe` | exit 1 |
+| 12 | per name: append the manifest record | exit 1 |
+
+Steps 9-11 run in that order for one reason: visibility must mean usability. The instant
+`bin\<name>.exe` exists the user can invoke it, so every action that can fail happens
+first. Removal reverses this (section 9).
+
+Every rename uses `os.Rename`, which is `MoveFileExW(MOVEFILE_REPLACE_EXISTING)` on
+Windows - atomic, no FFI. `writeAtomic` is `os.CreateTemp` + `Write` + `Chmod` + `Rename`,
+and the temporary name always contains `.tmp.` so `check` and `gc` can recognise leftovers.
+
+## 7. Validation rules
+
+### 7.1 Names
+
+| Rule | Reason |
+| --- | --- |
+| 1..127 characters | filesystem limit headroom |
+| no `.exe` suffix | it is appended automatically |
+| no separators or illegal characters (`\ / : * ? " < > \|`) | path injection and Win32 rejection |
+| no control characters | unprintable in diagnostics |
+| must not end with a space or a dot | Win32 trims them silently, so the real name differs |
+| not `CON PRN AUX NUL COM1-9 LPT1-9` | reserved device names |
+| unique case-insensitively | Windows cannot hold `Cargo` and `cargo` apart |
+
+### 7.2 Targets
+
+`resolveFinal` must succeed, the result must be a regular file, and the extension must be
+`.exe` (or `.bat`/`.cmd` with `--allow-script`). A name without `.exe` is rejected because
+`resolve_exe` would try `<name>.exe` first and could quietly launch a neighbour.
+
+For `.exe`, the PE header must parse, the machine must be known (x86, x64, arm64), and the
+subsystem must be 2 (GUI) or 3 (console). Anything else has no template to use.
+
+### 7.3 Template selection
+
+Subsystem 3 -> `wshim-c.exe`; subsystem 2 -> `wshim-w.exe`. A batch file is treated as
+console: `std` wraps it in `cmd.exe`, so it needs a console anyway.
+
+### 7.4 Cycle detection
+
+A target that resolves inside `bin\` or `.ref\` is refused. The upstream runtime has no
+recursion guard, so a chain `a -> b -> a` would spawn processes until an external limit
+kills them, roughly 50 ms per hop with a command line that grows at every level.
+
+### 7.5 Path length
+
+`CreateSymbolicLinkW` reports `ERROR_FILENAME_EXCED_RANGE` (206) past `MAX_PATH`. The
+retry uses an explicit `\\?\` prefix on both sides. If that also fails, the error is
+reported rather than silently truncated.
+
+## 8. `check` rules
+
+| Code | Condition | `--fix` |
+| --- | --- | --- |
+| `missing` | named on the command line, exists nowhere | no |
+| `stale` | manifest record, neither file on disk | drop the record |
+| `orphan` | shim copy, no `.ref` entry, **digest matches a template** | remove the copy |
+| `foreign` | executable in `bin` whose digest matches no template | **never touched** |
+| `half` | `.ref` entry, no shim copy | remove the entry |
+| `not-symlink` | `.ref` entry is not a symlink | no |
+| `dangling` | link target is gone | no |
+| `cycle` | target resolves inside the shim directory | no |
+| `relative` | relative link; depends on the shape of `.ref` | rewrite as absolute |
+| `not-pe` | target is not a PE image | no |
+| `template` | shim copy differs from its template | rewrite the copy |
+| `tmp` | leftover `.tmp.` file | delete it |
+| `template-stale` | `templates\<t>.exe` differs from the embedded bytes | refresh it |
+| `unregistered` | executable in `bin` not in the manifest | never deletes |
+
+`orphan` requires a template digest match. A digest that matches nothing belongs to
+whoever put the file there, and deleting it would be data loss - which matters because
+`bin` may be shared with another package manager.
+
+`jig.exe` itself is excluded from the inventory by name, so `jig check --fix` can never
+remove the running manager. Adding a shim under the running executable's own path is
+refused for the same reason.
+
+A file covered by an entry-level finding never also produces `unregistered`: one file, one
+conclusion.
+
+## 9. Removal
+
+Reverse order: remove `bin\<name>.exe`, then unlink `.ref\<name>.exe`, then append the
+record. An interruption leaves a tree that is not runnable but structurally complete, which
+`check` classifies as `half`.
+
+`rm` refuses a name that is not in the manifest. It also refuses to delete a copy whose
+digest no longer matches what `jig` wrote, unless `--force` is given: a mismatch means the
+file is no longer `jig`'s to delete.
+
+`os.Remove` on a symlink deletes the link only; it never follows to the target.
+
+## 10. Concurrency, idempotence, atomicity
+
+- `.lock` is opened with `CreateFileW` and **share mode 0**, because Go's `os.OpenFile`
+  always shares read/write and that is not mutual exclusion on Windows. A 5 second
+  deadline, then exit code 5.
+- `add` is idempotent: the same name pointing at the same final target reports "nothing to
+  do" and exits 0.
+- Every file write goes through `writeAtomic`; every link goes through a temporary name
+  plus rename.
+- The lock covers mutation only. `ls`, `which` and `check` read without it - a stale read
+  is preferable to blocking a diagnostic command behind a hung writer.
+
+## 11. Manifest
+
+One JSON object per line, append-only:
+
+```json
+{"v":1,"op":"add","name":"git","target":"C:\\Program Files\\Git\\cmd\\git.exe","link":"symlink","subsystem":3,"sha256":"...","ts":"2026-11-05T10:52:00+08:00"}
+```
+
+`op` is `add`, `rm` or `snapshot`. A snapshot replaces the whole state and is what `gc`
+leaves behind after compaction. Entries are keyed by lower-cased name. An unparseable line
+is a hard error naming the line number - a half-understood manifest is worse than none.
+
+## 12. Non-goals
+
+- No fallback when symlink creation is denied.
+- No argument rewriting, environment filtering or output capture.
+- No PATH editing; `path` only prints the directory.
+- No version management of the targets, no update checks.
+- No shim for directories or for anything without an `.exe` extension.
+
+## 13. Embedding upstream artifacts
+
+`assets/` holds the unmodified release binaries. `asset.go` pins repo, tag, commit and both
+digests; `verifyEmbedded` re-checks them on every start, so a build that embedded the wrong
+file fails before touching the disk.
+
+Why not build locally: a self-compiled Rust/MSVC binary is a byte stream nobody else can
+vouch for. Toolchain, base image and linker decide the hash, so there is nothing to compare
+against. The upstream artifacts carry a SLSA provenance statement binding these exact
+digests to a tag, a commit and a GitHub-hosted workflow run.
+
+Updating the pinned version is therefore a four-line change (repo tag, commit, two
+digests) plus replacing two files - and a rebuild that gets it wrong refuses to start.
+
+## 14. Acceptance checklist
+
+Each item was executed against a real tree; `[x]` means observed, not assumed.
+
+| # | Check | Expected |
+| --- | --- | --- |
+| 1 | `jig version` without a root | prints digests, exit 0 |
+| 2 | `jig ls` in a tree with no marker | exit 2, names all three sources tried |
+| 3 | `jig init --root <new>` | creates `.jig-root`, `bin\.ref`, `templates` |
+| 4 | `jig add` run from `<root>\bin` without a flag | marker found, works |
+| 5 | shim execution | forwards argv, exit code and stdout |
+| 6 | GUI target | `wshim-w.exe` copy, subsystem `gui` |
+| 7 | console target | `wshim-c.exe` copy, subsystem `console` |
+| 8 | `add` twice with the same target | idempotent, exit 0 |
+| 9 | `add` same name, different target | exit 3 without `--force` |
+| 10 | `add bad:name` / `add con` | exit 3, name rejected |
+| 11 | `add` a target inside `bin` | exit 3, cycle refused |
+| 12 | `rm` an unregistered name | exit 3, nothing deleted |
+| 13 | foreign executable in `bin` | `warn foreign`, never deleted by `--fix` |
+| 14 | relative `.ref` entry | `warn relative`, `--fix` rewrites absolute, shim still runs |
+| 15 | `jig.exe` inside `bin` | absent from `check` output, survives `--fix` |
+| 16 | `--root` vs `$JIG_ROOT` | `--root` wins |
+| 17 | `check` on a healthy tree | exit 0 |
+| 18 | non-ASCII in `*.go` | none; all source and messages are ASCII |

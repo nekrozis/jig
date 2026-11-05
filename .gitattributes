@@ -1,0 +1,5 @@
+# normalise to LF everywhere; the toolchain and the shell scripts both prefer it
+* text=auto eol=lf
+
+*.exe binary
+*.sh  text eol=lf

@@ -1,0 +1,10 @@
+# build output
+/jig.exe
+/dist/
+
+# leftovers from interrupted writes
+*.tmp.*
+
+# OS noise
+Thumbs.db
+.DS_Store
