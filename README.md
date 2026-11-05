@@ -115,9 +115,11 @@ keeps the two names independent of each other.
 What the shim *is* linked to is the template. `bin\<name>.exe` is a hard link into
 `templates\`, so every shim of one subsystem shares a single 310 KB inode: 100 console shims
 cost 310 KB, not 31 MB, and a running set of them maps one image section. `os.Link` is
-attempted first and any failure falls back to a copy, so exFAT volumes, a `bin\` junctioned
-onto another drive, and NTFS's 1024-links-per-file ceiling all still work - they just cost
-the disk space.
+attempted first and any failure falls back to a copy, so exFAT volumes and a `bin\` junctioned
+onto another drive still work - they just cost the disk space. NTFS's ceiling of 1024 links
+per file is not left as a cliff either: the template is re-materialised on a fresh inode and
+the link retried once, so the 1024th shim costs one extra 310 KB template rather than
+turning every later shim into a full copy.
 
 The price of sharing an inode is one rule: **never write to `templates\` in place.** jig
 always replaces it through a temp file and a rename, which detaches the old inode rather

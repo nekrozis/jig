@@ -17,6 +17,7 @@ const (
 	errFilenameExcedRange = syscall.Errno(206)  // ERROR_FILENAME_EXCED_RANGE
 	errSharingViolation   = syscall.Errno(32)   // ERROR_SHARING_VIOLATION
 	errPathNotFound       = syscall.Errno(3)    // ERROR_PATH_NOT_FOUND
+	errTooManyLinks       = syscall.Errno(1142) // ERROR_TOO_MANY_LINKS
 )
 
 func randHex(n int) string {

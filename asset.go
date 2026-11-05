@@ -2,6 +2,7 @@ package main
 
 import (
 	_ "embed"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -140,24 +141,50 @@ func (l layout) installTemplate(subsystem uint16, force bool) (string, string, e
 // rename keeps the replacement atomic the same way a copy does.
 //
 // Known limits, all of which degrade to a copy rather than an error: a
-// filesystem without hard links (exFAT, FAT32), a bin\ that is a junction onto
-// another volume, and NTFS's ceiling of 1024 links per file (measured: the
-// 1024th returns ERROR_TOO_MANY_LINKS, 1142).
+// filesystem without hard links (exFAT, FAT32) and a bin\ that is a junction
+// onto another volume.
+//
+// NTFS caps a file at 1024 links (measured: the 1024th returns
+// ERROR_TOO_MANY_LINKS, 1142). That ceiling is handled here rather than
+// tolerated, because beating it needs no new file: rewriting the template at
+// the same path leaves a fresh inode holding the same bytes, and the shims that
+// were linked to the previous one keep it alive. See the retry below.
 func (l layout) placeShim(name string, subsystem uint16) error {
 	tpl, _, err := l.ensureTemplate(subsystem)
 	if err != nil {
 		return err
 	}
-	dest := l.shim(name)
 
-	tmp := filepath.Join(l.bin(), name+".exe.tmp."+randHex(4))
-	if err := os.Link(tpl, tmp); err == nil {
-		if err := os.Rename(tmp, dest); err == nil {
-			return nil
+	if err := l.linkShim(tpl, name); err == nil {
+		return nil
+	} else if errors.Is(err, errTooManyLinks) {
+		// One retry against a re-materialised template buys another 1023 slots
+		// at the cost of a single 310 KB copy that is already part of the disk
+		// contract. Sharding templates into extra files would reach the same
+		// place, but every shard is a new class of file that has to be named,
+		// verified, invalidated on upgrade and garbage collected - a bigger
+		// source of bugs than the ceiling it removes.
+		if fresh, _, ferr := l.installTemplate(subsystem, true); ferr == nil {
+			if l.linkShim(fresh, name) == nil {
+				return nil
+			}
 		}
-		os.Remove(tmp)
 	}
-	return writeAtomic(dest, templateBytes(subsystem), 0o755)
+	return writeAtomic(l.shim(name), templateBytes(subsystem), 0o755)
+}
+
+// linkShim creates bin\<name>.exe as a hard link to tpl, keeping the
+// replacement atomic by renaming a temporary link into place.
+func (l layout) linkShim(tpl, name string) error {
+	tmp := filepath.Join(l.bin(), name+".exe.tmp."+randHex(4))
+	if err := os.Link(tpl, tmp); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, l.shim(name)); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // templateSum hashes in memory only, so check works even when templates\ is

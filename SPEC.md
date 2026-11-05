@@ -68,8 +68,14 @@ A shim is normally a **hard link** to its template, so N shims occupy one 310 KB
 instead of N. `os.Link` is attempted first and every failure falls back to a byte copy, so
 the contract that callers depend on never varies: a shim is an executable whose digest
 equals the pinned template. The fallbacks are a filesystem without hard links (exFAT,
-FAT32), a `bin\` junctioned onto another volume, and NTFS's ceiling of 1024 links per file
-(measured: the 1024th link returns `ERROR_TOO_MANY_LINKS`, 1142).
+FAT32) and a `bin\` junctioned onto another volume.
+
+NTFS caps one file at 1024 links (measured: the 1024th returns `ERROR_TOO_MANY_LINKS`,
+1142). The ceiling is rolled over, not accepted: rewriting the template at the same path
+leaves a fresh inode holding the same bytes, while the shims already linked to the previous
+one keep it alive, so one retry buys another 1023 slots. Nothing new appears in
+`templates\`, so there is no second class of file to name, verify, invalidate on upgrade or
+garbage collect.
 
 Because the inode is shared, one rule is load-bearing: **`templates\` is never written in
 place.** Every write goes through `writeAtomic` (temp file + rename), which detaches the old
@@ -329,3 +335,4 @@ Each item was executed against a real tree; `[x]` means observed, not assumed.
 | 18 | non-ASCII in `*.go` | none; all source and messages are ASCII |
 | 19 | a shim after `add` | same file index as its template, still runs |
 | 19b | template truncated in place | every shim reported, `--fix` restores and relinks them |
+| 20 | `add` at the 1024-link ceiling | template rolls to a new inode, shim is still a link |

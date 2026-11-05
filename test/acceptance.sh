@@ -159,6 +159,35 @@ chk "19b restoration is a link again" "same" "$(
 	[ -n "$i1" ] && [ "$i1" = "$i2" ] && echo same || echo different
 )"
 
+# 20. NTFS stops a file at 1024 links. That must roll the template onto a fresh
+#     inode, not silently degrade every later shim to a 310 KB copy.
+python - "$R/templates/wshim-c.exe" <<'PY' 2>/dev/null
+import os, sys
+d = sys.argv[1]
+i = 0
+while True:
+    try:
+        os.link(d, os.path.join(os.path.dirname(d), 'pad%04d.exe' % i))
+        i += 1
+    except OSError:
+        break
+PY
+chk "20 the template really is at the ceiling" "yes" "$(
+	[ "$(stat -c %h "$R/templates/wshim-c.exe")" -ge 1024 ] && echo yes || echo no
+)"
+"$JIG" --root "$R" add ceilprobe 'C:\Windows\System32\hostname.exe' >/dev/null 2>&1
+chk "20 add at the ceiling succeeds" "0" "$?"
+chk "20 the ceiling rolled the template to a new inode" "different" "$(
+	[ "$(stat -c %i "$R/templates/wshim-c.exe")" = "$(stat -c %i "$R/templates/pad0000.exe")" ] &&
+		echo same || echo different
+)"
+chk "20 the new shim is a link, not a copy" "same" "$(
+	i1="$(stat -c %i "$bin/ceilprobe.exe" 2>/dev/null)"
+	i2="$(stat -c %i "$R/templates/wshim-c.exe" 2>/dev/null)"
+	[ -n "$i1" ] && [ "$i1" = "$i2" ] && echo same || echo different
+)"
+chk "20 shim created at the ceiling runs" "0" "$("$bin/ceilprobe.exe" >/dev/null 2>&1; echo $?)"
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
