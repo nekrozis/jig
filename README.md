@@ -35,7 +35,8 @@ GitHub-hosted workflow run, so anyone can verify where the code came from.
 
 The digests are pinned in `asset.go` and re-checked on every start, so a build that picked
 up the wrong file fails immediately instead of producing shims that forward somewhere
-unexpected.
+unexpected. `assets/upstream-manifest.json` is the release's own build record (image,
+toolchain, linker, flags), kept verbatim so the provenance can be audited offline.
 
 ### Verifying that your `jig` carries the real thing
 
