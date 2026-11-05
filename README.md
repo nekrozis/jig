@@ -8,7 +8,7 @@ standard handles and working directory. At runtime it is two statements: `read_l
 `spawn`. Everything that can go wrong therefore has to be prevented at install time,
 because a contract violation at runtime is a process abort rather than a readable error.
 
-`jig` is that install-time half. It owns the `.ref` entries, the shim copies, and a
+`jig` is that install-time half. It owns the `.ref` entries, the shims, and a
 manifest that lets `check` prove the tree is still coherent.
 
 ```
@@ -98,7 +98,7 @@ assumption. Installed anywhere else, `jig` finds no marker and tells you to pass
     wshim-w.exe       GUI-subsystem template
   bin\                <- put this on PATH
     jig.exe           optional; jig can live here
-    <name>.exe        a copy of one template, bytes identical
+    <name>.exe        hard link to one template (copy where linking is impossible)
     .ref\
       <name>.exe      absolute symlink -> the real program
 ```
@@ -107,10 +107,23 @@ assumption. Installed anywhere else, `jig` finds no marker and tells you to pass
 resolves `<its own directory>\.ref\<its own file name>`, so moving `.ref` anywhere else
 breaks every shim at runtime, silently.
 
-A shim is a *copy*, never a link. Launching it therefore yields `GetModuleFileNameW` =
-`<root>\bin\<name>.exe`, and the shim reads `.ref\<name>.exe` next to itself. Hard links,
-symlinks and junctions all work too, but a copy is the only form that keeps the two names
-independent of each other.
+A shim is a real file of its own, never a symlink to the target: launching it yields
+`GetModuleFileNameW` = `<root>\bin\<name>.exe`, and the shim reads `.ref\<name>.exe` next to
+itself. Taking a symlink or a junction to the target instead works too, but only a real file
+keeps the two names independent of each other.
+
+What the shim *is* linked to is the template. `bin\<name>.exe` is a hard link into
+`templates\`, so every shim of one subsystem shares a single 310 KB inode: 100 console shims
+cost 310 KB, not 31 MB, and a running set of them maps one image section. `os.Link` is
+attempted first and any failure falls back to a copy, so exFAT volumes, a `bin\` junctioned
+onto another drive, and NTFS's 1024-links-per-file ceiling all still work - they just cost
+the disk space.
+
+The price of sharing an inode is one rule: **never write to `templates\` in place.** jig
+always replaces it through a temp file and a rename, which detaches the old inode rather
+than mutating it, so an upgrade cannot rewrite the bytes its shims are pointing at. An
+outside program that truncates a template in place breaks every linked shim at once;
+`jig check` names them all and `--fix` restores them from the embedded copy.
 
 ## Commands
 
@@ -142,7 +155,7 @@ privilege, `5` lock contention.
    does not exist)
 5. write the template to `templates\`
 6. create `.ref\<name>.exe.tmp.<rand>`, then rename it onto `.ref\<name>.exe`
-7. write the shim copy to `bin\<name>.exe`
+7. link the template into `bin\<name>.exe` (copy if linking is unavailable)
 8. append the manifest record
 
 Steps 6 and 7 are in that order because visibility must mean usability: the instant
@@ -154,14 +167,14 @@ Steps 6 and 7 are in that order because visibility must mean usability: the inst
 | --- | --- | --- |
 | `missing` | named on the command line, exists nowhere | no |
 | `stale` | manifest record, neither file on disk | drops the record |
-| `orphan` | shim copy with no `.ref` entry | removes the copy |
-| `half` | `.ref` entry with no shim copy | removes the entry |
+| `orphan` | shim with no `.ref` entry | removes it |
+| `half` | `.ref` entry with no shim | removes the entry |
 | `not-symlink` | `.ref` entry is not a symlink | no |
 | `dangling` | link target is gone | no |
 | `cycle` | target resolves inside the shim directory | no |
 | `relative` | relative link, depends on the shape of `.ref` | rewrites absolute |
 | `not-pe` | target is not a PE image | no |
-| `template` | shim copy differs from its template | rewrites the copy |
+| `template` | shim differs from its template | relinks from the template |
 | `foreign` | executable in `bin` that `jig` never wrote | **never touches it** |
 | `unregistered` | executable in `bin` not in the manifest | never deletes |
 

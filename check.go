@@ -211,7 +211,7 @@ func (c *checker) checkName(name string, registered bool) {
 				fmt.Sprintf("shim copy differs from the %s template (replaced, or template updated)",
 					subsystemName(s.Subsystem)),
 				"shim copy rewritten from the template", func() error {
-					return writeAtomic(c.l.shim(name), templateBytes(s.Subsystem), 0o755)
+					return c.l.placeShim(name, s.Subsystem)
 				})
 		case s.Relative:
 			// "relative" was already reported above; do not add a redundant ok.

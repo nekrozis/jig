@@ -135,6 +135,30 @@ chk "17 healthy tree checks clean" "0" "$?"
 nonascii="$(grep -lP '[^\x00-\x7F]' "$here"/*.go 2>/dev/null | wc -l | tr -d ' ')"
 chk "18 all .go sources are ASCII" "0" "$nonascii"
 
+# 19. a shim shares one inode with its template instead of copying the bytes
+"$JIG" --root "$R" add linkprobe 'C:\Windows\System32\hostname.exe' >/dev/null 2>&1
+chk "19 shim shares the template's file" "same" "$(
+	i1="$(stat -c %i "$bin/linkprobe.exe" 2>/dev/null)"
+	i2="$(stat -c %i "$R/templates/wshim-c.exe" 2>/dev/null)"
+	[ -n "$i1" ] && [ "$i1" = "$i2" ] && echo same || echo different
+)"
+chk "19 linked shim still runs" "0" "$("$bin/linkprobe.exe" >/dev/null 2>&1; echo $?)"
+
+# 19b. shared bytes means an in-place write to the template reaches every shim;
+#      that cannot be prevented, so recovery is the contract being tested.
+python -c "import sys; f=open(sys.argv[1],'r+b'); f.write(b'X'*64); f.truncate(900); f.close()" \
+	"$R/templates/wshim-c.exe" 2>/dev/null
+out="$("$JIG" --root "$R" check 2>&1)"
+contains "19b damaged template is detected" "differs" "$out"
+"$JIG" --root "$R" check --fix >/dev/null 2>&1
+chk "19b every shim was restored" "0" "$("$JIG" --root "$R" check >/dev/null 2>&1; echo $?)"
+chk "19b restored shim runs" "0" "$("$bin/linkprobe.exe" >/dev/null 2>&1; echo $?)"
+chk "19b restoration is a link again" "same" "$(
+	i1="$(stat -c %i "$bin/linkprobe.exe" 2>/dev/null)"
+	i2="$(stat -c %i "$R/templates/wshim-c.exe" 2>/dev/null)"
+	[ -n "$i1" ] && [ "$i1" = "$i2" ] && echo same || echo different
+)"
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

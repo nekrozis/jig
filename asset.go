@@ -121,6 +121,45 @@ func (l layout) installTemplate(subsystem uint16, force bool) (string, string, e
 	return path, want, nil
 }
 
+// placeShim makes bin\<name>.exe hold the bytes of one template.
+//
+// A hard link is tried first, and anything that goes wrong simply falls back to
+// a copy, so the observable result is the same everywhere: an executable whose
+// digest equals the pinned template. What the link buys is that N shims occupy
+// one 310 KB image instead of N, that add stops writing 310 KB per name, and
+// that concurrently running shims map a single shared image section.
+//
+// It is only safe because templates\ is never written in place. Every write
+// goes through writeAtomic, which builds a new file and renames it over - so an
+// upgrade detaches the old inode instead of mutating the one the shims still
+// point at. Writing 310 KB into the template path directly would rewrite every
+// linked shim at once, and corrupt all of them if it failed halfway.
+//
+// The link is created beside the destination and renamed into place, never
+// linked over it: CreateHardLinkW refuses an existing name, and going through a
+// rename keeps the replacement atomic the same way a copy does.
+//
+// Known limits, all of which degrade to a copy rather than an error: a
+// filesystem without hard links (exFAT, FAT32), a bin\ that is a junction onto
+// another volume, and NTFS's ceiling of 1024 links per file (measured: the
+// 1024th returns ERROR_TOO_MANY_LINKS, 1142).
+func (l layout) placeShim(name string, subsystem uint16) error {
+	tpl, _, err := l.ensureTemplate(subsystem)
+	if err != nil {
+		return err
+	}
+	dest := l.shim(name)
+
+	tmp := filepath.Join(l.bin(), name+".exe.tmp."+randHex(4))
+	if err := os.Link(tpl, tmp); err == nil {
+		if err := os.Rename(tmp, dest); err == nil {
+			return nil
+		}
+		os.Remove(tmp)
+	}
+	return writeAtomic(dest, templateBytes(subsystem), 0o755)
+}
+
 // templateSum hashes in memory only, so check works even when templates\ is
 // absent.
 func templateSum(subsystem uint16) string {

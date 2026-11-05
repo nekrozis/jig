@@ -67,12 +67,12 @@ func rmOne(l layout, st state, name string, force bool) error {
 	binPath := l.shim(rec.Name)
 	entry := l.entry(rec.Name)
 
-	// Do not delete a copy the user replaced: a digest mismatch means this is
-	// no longer what jig wrote.
+	// Do not delete a file the user replaced: a digest mismatch means this is
+	// no longer what jig put there.
 	if got, err := fileSHA256(binPath); err == nil {
 		if rec.SHA256 != "" && got != rec.SHA256 && !force {
 			return fail(exitInvalid,
-				"%s is no longer the copy jig wrote (digest mismatch)\n  add --force if you really want it gone",
+				"%s is no longer the shim jig wrote (digest mismatch)\n  add --force if you really want it gone",
 				stripLong(binPath))
 		}
 	}

@@ -152,7 +152,7 @@ func addOne(l layout, name, target string, subsystem uint16, force bool) error {
 		if err := os.MkdirAll(l.bin(), 0o755); err != nil {
 			return fail(exitPartial, "cannot create %s: %v", l.bin(), err)
 		}
-		if err := writeAtomic(binPath, templateBytes(subsystem), 0o755); err != nil {
+		if err := l.placeShim(name, subsystem); err != nil {
 			return fail(exitPartial, "cannot write %s: %v", binPath, err)
 		}
 	}

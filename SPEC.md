@@ -54,7 +54,7 @@ runtime is left with `read_link` and `spawn`.
     wshim-w.exe                 GUI template
   bin\                          the only directory that goes on PATH
     jig.exe                     optional
-    <name>.exe                  byte-identical copy of one template
+    <name>.exe                  hard link to one template (copy if linking fails)
     .ref\
       <name>.exe                absolute symlink -> the real program
 ```
@@ -63,6 +63,20 @@ The templates live in `assets/` in the source tree and are embedded at **compile
 `templates\` is the **runtime** copy; it is byte-identical to the embedded bytes and is
 rewritten whenever the digest disagrees. An upgrade therefore needs no sidecar files:
 `check --fix` refreshes the on-disk templates.
+
+A shim is normally a **hard link** to its template, so N shims occupy one 310 KB image
+instead of N. `os.Link` is attempted first and every failure falls back to a byte copy, so
+the contract that callers depend on never varies: a shim is an executable whose digest
+equals the pinned template. The fallbacks are a filesystem without hard links (exFAT,
+FAT32), a `bin\` junctioned onto another volume, and NTFS's ceiling of 1024 links per file
+(measured: the 1024th link returns `ERROR_TOO_MANY_LINKS`, 1142).
+
+Because the inode is shared, one rule is load-bearing: **`templates\` is never written in
+place.** Every write goes through `writeAtomic` (temp file + rename), which detaches the old
+inode instead of mutating it, so an upgrade can never rewrite the bytes a shim is pointing
+at. Nothing stops an outside program from truncating the template in place, though, and if
+it does, every linked shim breaks at once - `check` reports them all and `--fix` restores
+them from the embedded copy.
 
 Three non-negotiables:
 
@@ -150,7 +164,7 @@ string, and never mixed with warnings on stdout.
 | 8 | take the lock | exit 5 |
 | 9 | per name: check for an existing entry with the same target (idempotent) or a different one (`--force`) | exit 3 |
 | 10 | per name: create `.ref\<name>.exe.tmp.<rand>`, then `os.Rename` onto `.ref\<name>.exe` | exit 1 |
-| 11 | per name: write the shim copy to `bin\<name>.exe` | exit 1 |
+| 11 | per name: link the template into `bin\<name>.exe` (copy when linking fails) | exit 1 |
 | 12 | per name: append the manifest record | exit 1 |
 
 Steps 9-11 run in that order for one reason: visibility must mean usability. The instant
@@ -207,15 +221,15 @@ reported rather than silently truncated.
 | --- | --- | --- |
 | `missing` | named on the command line, exists nowhere | no |
 | `stale` | manifest record, neither file on disk | drop the record |
-| `orphan` | shim copy, no `.ref` entry, **digest matches a template** | remove the copy |
+| `orphan` | shim with no `.ref` entry, **digest matches a template** | remove it |
 | `foreign` | executable in `bin` whose digest matches no template | **never touched** |
-| `half` | `.ref` entry, no shim copy | remove the entry |
+| `half` | `.ref` entry, no shim | remove the entry |
 | `not-symlink` | `.ref` entry is not a symlink | no |
 | `dangling` | link target is gone | no |
 | `cycle` | target resolves inside the shim directory | no |
 | `relative` | relative link; depends on the shape of `.ref` | rewrite as absolute |
 | `not-pe` | target is not a PE image | no |
-| `template` | shim copy differs from its template | rewrite the copy |
+| `template` | shim differs from its template | relink from the template |
 | `tmp` | leftover `.tmp.` file | delete it |
 | `template-stale` | `templates\<t>.exe` differs from the embedded bytes | refresh it |
 | `unregistered` | executable in `bin` not in the manifest | never deletes |
@@ -237,7 +251,7 @@ Reverse order: remove `bin\<name>.exe`, then unlink `.ref\<name>.exe`, then appe
 record. An interruption leaves a tree that is not runnable but structurally complete, which
 `check` classifies as `half`.
 
-`rm` refuses a name that is not in the manifest. It also refuses to delete a copy whose
+`rm` refuses a name that is not in the manifest. It also refuses to delete a file whose
 digest no longer matches what `jig` wrote, unless `--force` is given: a mismatch means the
 file is no longer `jig`'s to delete.
 
@@ -300,8 +314,8 @@ Each item was executed against a real tree; `[x]` means observed, not assumed.
 | 3 | `jig init --root <new>` | creates `.jig-root`, `bin\.ref`, `templates` |
 | 4 | `jig add` run from `<root>\bin` without a flag | marker found, works |
 | 5 | shim execution | forwards argv, exit code and stdout |
-| 6 | GUI target | `wshim-w.exe` copy, subsystem `gui` |
-| 7 | console target | `wshim-c.exe` copy, subsystem `console` |
+| 6 | GUI target | `wshim-w.exe` shim, subsystem `gui` |
+| 7 | console target | `wshim-c.exe` shim, subsystem `console` |
 | 8 | `add` twice with the same target | idempotent, exit 0 |
 | 9 | `add` same name, different target | exit 3 without `--force` |
 | 10 | `add bad:name` / `add con` | exit 3, name rejected |
@@ -313,3 +327,5 @@ Each item was executed against a real tree; `[x]` means observed, not assumed.
 | 16 | `--root` vs `$JIG_ROOT` | `--root` wins |
 | 17 | `check` on a healthy tree | exit 0 |
 | 18 | non-ASCII in `*.go` | none; all source and messages are ASCII |
+| 19 | a shim after `add` | same file index as its template, still runs |
+| 19b | template truncated in place | every shim reported, `--fix` restores and relinks them |
