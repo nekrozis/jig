@@ -1,0 +1,110 @@
+name: release-build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+jobs:
+  build:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: build twice and compare
+        shell: pwsh
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = $env:TAG
+          if ($tag -notmatch '^v\d+\.\d+\.\d+$') {
+            throw "tag must look like v1.2.3, got: $tag"
+          }
+
+          go version
+          go vet ./...
+          if ($LASTEXITCODE -ne 0) { throw "go vet failed" }
+          go test ./...
+          if ($LASTEXITCODE -ne 0) { throw "go test failed" }
+
+          $src = (Get-Location).Path
+          $hashes = @()
+          foreach ($name in @('a', 'b')) {
+            $dir = Join-Path $env:RUNNER_TEMP "jig-build-$name"
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            Get-ChildItem -Force -LiteralPath $src |
+              Where-Object { $_.Name -ne '.git' } |
+              Copy-Item -Destination $dir -Recurse
+
+            Push-Location $dir
+            try {
+              $env:CGO_ENABLED = '0'
+              $env:GOFLAGS = ''
+              go build -buildvcs=false -trimpath -ldflags "-s -w" -o (Join-Path $dir 'jig.exe') .
+              if ($LASTEXITCODE -ne 0) { throw "build $name failed" }
+            } finally {
+              Pop-Location
+            }
+            $hashes += (Get-FileHash -Algorithm SHA256 (Join-Path $dir 'jig.exe')).Hash.ToLower()
+          }
+
+          if ($hashes[0] -ne $hashes[1]) {
+            throw "A/B mismatch: $($hashes[0]) vs $($hashes[1])"
+          }
+          Write-Host "reproducible: $($hashes[0])"
+
+          $dist = Join-Path $src 'dist'
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          Copy-Item (Join-Path $env:RUNNER_TEMP 'jig-build-a\jig.exe') (Join-Path $dist 'jig.exe')
+
+          $version = (& (Join-Path $dist 'jig.exe') version | Select-Object -First 1).Trim()
+          $want = "jig $($tag.Substring(1))"
+          if ($version -ne $want) {
+            throw "embedded version is '$version', tag expects '$want'"
+          }
+
+          "$($hashes[0])  jig.exe" | Set-Content -Encoding ascii (Join-Path $dist 'sha256.txt')
+
+          $manifest = [ordered]@{
+            name    = 'jig'
+            tag     = $tag
+            commit  = (git rev-parse HEAD).Trim()
+            go      = (go version)
+            goos    = 'windows'
+            goarch  = 'amd64'
+            flags   = '-buildvcs=false -trimpath -ldflags "-s -w"'
+            sha256  = $hashes[0]
+            size    = (Get-Item (Join-Path $dist 'jig.exe')).Length
+            build_a = $hashes[0]
+            build_b = $hashes[1]
+            runner  = "$env:ImageOS $env:ImageVersion"
+          }
+          $manifest | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $dist 'manifest.json')
+          Get-Content (Join-Path $dist 'manifest.json')
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: jig-${{ inputs.tag || github.ref_name }}
+          path: dist/*
+          if-no-files-found: error
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-path: dist/jig.exe

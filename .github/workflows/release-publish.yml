@@ -1,0 +1,131 @@
+name: release-publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: release-build run ID
+        required: true
+      tag:
+        description: Tag to draft (for example v0.4.0)
+        required: true
+
+permissions:
+  contents: write
+  actions: read
+  attestations: read
+
+jobs:
+  draft:
+    runs-on: windows-2025
+    environment: release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.tag }}
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: verify artifact, rebuild, and create draft
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = $env:TAG
+          $runId = $env:RUN_ID
+          $repo = $env:GITHUB_REPOSITORY
+          if ($tag -notmatch '^v\d+\.\d+\.\d+$') { throw "bad tag: $tag" }
+
+          $tagSha = (git rev-parse "$tag^{}").Trim()
+          $run = gh api "repos/$repo/actions/runs/$runId" | ConvertFrom-Json
+          if ($run.name -ne 'release-build') { throw "run is $($run.name), not release-build" }
+          if ($run.conclusion -ne 'success') { throw "run concluded $($run.conclusion)" }
+          if ($run.head_sha -ne $tagSha) { throw "run built $($run.head_sha), tag is $tagSha" }
+          Write-Host "run $runId built $tagSha for $tag"
+
+          $dist = Join-Path (Get-Location) 'dist'
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          gh run download $runId --repo $repo --name "jig-$tag" -D $dist
+          if ($LASTEXITCODE -ne 0) { throw "artifact download failed" }
+
+          $hash = (Get-FileHash -Algorithm SHA256 (Join-Path $dist 'jig.exe')).Hash.ToLower()
+          $manifest = Get-Content (Join-Path $dist 'manifest.json') -Raw | ConvertFrom-Json
+          if ($manifest.tag -ne $tag) { throw "manifest tag is $($manifest.tag)" }
+          if ($manifest.sha256 -ne $hash) { throw "manifest hash $($manifest.sha256), file $hash" }
+          $sums = (Get-Content (Join-Path $dist 'sha256.txt') -Raw).Trim()
+          if ($sums -notmatch [regex]::Escape($hash)) { throw "sha256.txt does not list $hash" }
+          Write-Host "sha256 $hash"
+
+          gh attestation verify (Join-Path $dist 'jig.exe') `
+            --repo $repo `
+            --signer-workflow "$repo/.github/workflows/release-build.yml" `
+            --source-digest $tagSha `
+            --source-ref "refs/tags/$tag" `
+            --deny-self-hosted-runners
+          if ($LASTEXITCODE -ne 0) { throw "attestation verification failed" }
+
+          $src = (Get-Location).Path
+          $rebuild = Join-Path $env:RUNNER_TEMP 'jig-rebuild'
+          New-Item -ItemType Directory -Force -Path $rebuild | Out-Null
+          Get-ChildItem -Force -LiteralPath $src |
+            Where-Object { $_.Name -notin @('.git', 'dist') } |
+            Copy-Item -Destination $rebuild -Recurse
+
+          Push-Location $rebuild
+          try {
+            $env:CGO_ENABLED = '0'
+            $env:GOFLAGS = ''
+            go build -buildvcs=false -trimpath -ldflags "-s -w" -o (Join-Path $rebuild 'jig.exe') .
+            if ($LASTEXITCODE -ne 0) { throw "rebuild failed" }
+          } finally {
+            Pop-Location
+          }
+          $rebuildHash = (Get-FileHash -Algorithm SHA256 (Join-Path $rebuild 'jig.exe')).Hash.ToLower()
+          if ($rebuildHash -ne $hash) {
+            throw "rebuild mismatch: artifact $hash, rebuild $rebuildHash"
+          }
+          Write-Host "rebuild matched: $rebuildHash"
+
+          $version = (& (Join-Path $dist 'jig.exe') version | Select-Object -First 1).Trim()
+          if ($version -ne "jig $($tag.Substring(1))") {
+            throw "embedded version is '$version'"
+          }
+
+          $exists = $false
+          try {
+            gh release view $tag --json isDraft 2>$null | Out-Null
+            $exists = ($LASTEXITCODE -eq 0)
+          } catch {
+            $exists = $false
+          }
+          if ($exists) { throw "release $tag already exists" }
+
+          $notes = @"
+          jig $tag
+
+          SHA-256: $hash
+          Built with $($manifest.go)
+          Runner: $($manifest.runner)
+
+          Reproducibility: two builds in separate directories matched, and an independent rebuild of the tag matched the artifact.
+          "@
+          $notesPath = Join-Path $env:RUNNER_TEMP 'notes.md'
+          $notes | Set-Content -Encoding utf8 $notesPath
+
+          gh release create $tag `
+            --draft `
+            --verify-tag `
+            --title "jig $tag" `
+            --notes-file $notesPath `
+            (Join-Path $dist 'jig.exe') `
+            (Join-Path $dist 'sha256.txt') `
+            (Join-Path $dist 'manifest.json')
+          if ($LASTEXITCODE -ne 0) { throw "draft creation failed" }
+
+          Write-Host "draft created for $tag (not published)"
