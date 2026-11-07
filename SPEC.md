@@ -161,24 +161,25 @@ string, and never mixed with warnings on stdout.
 | # | Step | On failure |
 | --- | --- | --- |
 | 1 | derive the name when omitted (target basename without `.exe`/`.bat`/`.cmd`), validate it plus aliases, reject case-insensitive duplicates | exit 3 |
-| 2 | resolve the target with `filepath.EvalSymlinks` | `ENOENT` -> exit 3; a path that does not exist is never accepted |
-| 3 | inspect the target: regular file -> `.exe` -> PE -> machine -> subsystem | exit 3 |
-| 4 | cycle detection: a target inside `bin\` or `_ref\` means `a -> b -> a` | exit 3 |
-| 5 | reject a target inside `templates\` (replays the same forward; `templates\_ref` does not exist) | exit 3 |
-| 6 | create the skeleton and the root marker | exit 1 |
-| 7 | write the chosen template to `templates\` if the digest differs | exit 1 |
-| 8 | take the lock | exit 5 |
-| 9 | per name: refuse to replace a `bin\<name>.exe` whose digest matches no template (`--force` overrides) | exit 3 |
-| 10 | per name: check for an existing entry with the same target (idempotent) or a different one (`--force`) | exit 3 |
-| 11 | per name: create `_ref\<name>.exe.tmp.<rand>`, then `os.Rename` onto `_ref\<name>.exe` | exit 1 |
-| 12 | per name: link the template into `bin\<name>.exe` (copy when linking fails) | exit 1 |
-| 13 | per name: append the manifest record | exit 1 |
+| 2 | normalize the input with `filepath.Abs` + `Clean`; resolve it with `filepath.EvalSymlinks` for validation only | `ENOENT` -> exit 3; a path that does not exist is never accepted |
+| 3 | inspect the resolved path: regular file -> `.exe` -> PE -> machine -> subsystem | exit 3 |
+| 4 | cycle detection on the resolved path: inside `bin\` or `_ref\` means `a -> b -> a` | exit 3 |
+| 5 | reject a resolved target inside `templates\` (replays the same forward; `templates\_ref` does not exist) | exit 3 |
+| 6 | create `root`, `bin\` and `_ref\` | exit 1 |
+| 7 | take the lock | exit 5 |
+| 8 | write the root marker | exit 1 |
+| 9 | write the chosen template to `templates\` if the digest differs | exit 1 |
+| 10 | per name: refuse to replace a `bin\<name>.exe` whose digest matches no template (`--force` overrides) | exit 3 |
+| 11 | per name: check the stored link target for idempotence (`--force` replaces a different one) | exit 3 |
+| 12 | per name: create `_ref\<name>.exe.tmp.<rand>`, then `os.Rename` onto `_ref\<name>.exe` | exit 1 |
+| 13 | per name: link the template into `bin\<name>.exe` (copy when linking fails) | exit 1 |
+| 14 | per name: append the manifest record | exit 1 |
 
-Steps 10-12 run in that order for one reason: visibility must mean usability. The instant
+Steps 11-13 run in that order for one reason: visibility must mean usability. The instant
 `bin\<name>.exe` exists the user can invoke it, so every action that can fail happens
 first. Removal reverses this (section 9).
 
-Step 9 exists because `bin\` may be shared with another package manager, and the same rule
+Step 10 exists because `bin\` may be shared with another package manager, and the same rule
 governs all three commands: a file whose digest matches no template is not jig's. `check`
 reports it as `foreign` and never deletes it, `rm` refuses to delete it, and `add` refuses
 to replace it. The check runs before `_ref` is touched, so a refusal cannot leave a
@@ -238,7 +239,8 @@ reported rather than silently truncated.
 | --- | --- | --- |
 | `missing` | named on the command line, exists nowhere | no |
 | `stale` | manifest record, neither file on disk | drop the record |
-| `orphan` | shim with no `_ref` entry, **digest matches a template** | remove it |
+| `orphan` | **manifest record exists**, `_ref` has no entry | remove the shim |
+| `unregistered-shim` | digest matches a template, **no manifest record** | never deletes |
 | `foreign` | executable in `bin` whose digest matches no template | **never touched** |
 | `half` | `_ref` entry, no shim | remove the entry |
 | `not-symlink` | `_ref` entry is not a symlink | no |
@@ -251,9 +253,11 @@ reported rather than silently truncated.
 | `template-stale` | `templates\<t>.exe` differs from the embedded bytes | refresh it |
 | `unregistered` | executable in `bin` not in the manifest | never deletes |
 
-`orphan` requires a template digest match. A digest that matches nothing belongs to
-whoever put the file there, and deleting it would be data loss - which matters because
-`bin` may be shared with another package manager.
+`orphan` requires both a manifest record and a template digest match. A digest match
+alone proves the file contains wshim, not that jig created it: another manager may have
+placed the same official binary in a shared `bin`. Without a record it is reported as
+`unregistered-shim` and kept. A digest that matches nothing belongs to whoever put the
+file there, and deleting it would be data loss.
 
 After a template upgrade, an orphan from the previous version matches no current template
 and is classified as `foreign`; it is kept, because the bytes no longer prove ownership.
@@ -288,8 +292,9 @@ file is no longer `jig`'s to delete.
   plus rename.
 - Windows refuses to replace an image that is running, so a template refresh or relink
   fails cleanly while any shim is mapped; rerunning after those processes exit completes it.
-- The lock covers mutation only. `ls`, `which` and `check` read without it - a stale read
-  is preferable to blocking a diagnostic command behind a hung writer.
+- The lock covers mutation: `add`, `rm`, `gc --apply`, `init` and `check --fix`.
+  `ls`, `which` and `check` without `--fix` read without it - a stale read is preferable to
+  blocking a diagnostic command behind a hung writer.
 
 ## 11. Manifest
 
@@ -357,3 +362,6 @@ Each item was executed against a real tree; `[x]` means observed, not assumed.
 | 21 | `add` a shim template as the target | exit 3, cycle refused |
 | 22 | `add` an unchanged entry twice | no new manifest event |
 | 23 | `add <target>` without a name | shim name is the target basename |
+| 24 | hold `.lock`, then `check --fix` / `check` | `--fix` exits 5; plain check still runs |
+| 25 | unregistered copy of a template in `bin` | reported, never deleted by `--fix` |
+| 26 | `add` through a `current` junction, then retarget it | stored target keeps `current`, shim follows |

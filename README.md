@@ -65,8 +65,12 @@ $ gh attestation verify wshim-c.exe --repo nekrozis/wshim \
 
 ```console
 $ jig init --root D:\shims
-$ setx PATH "%PATH%;D:\shims\bin"
 ```
+
+Then add `D:\shims\bin` to PATH through **Settings > System > About > Advanced system
+settings > Environment Variables**, or the "Edit environment variables for your account"
+dialog. Avoid `setx PATH "%PATH%;..."`: it expands the system and user values into the
+user value, duplicates entries, and truncates at 1024 characters.
 
 `init` writes the skeleton and both templates, and plants a `.jig-root` marker. `jig.exe`
 can live anywhere, including inside `<root>\bin`.
@@ -154,32 +158,43 @@ privilege, `5` lock contention.
 
 1. validate the name (explicit, or the target's basename without `.exe`/`.bat`/`.cmd`;
    reserved device names, trailing dot/space, path separators are rejected)
-2. resolve the target and inspect it: exists -> regular file -> `.exe` -> PE -> machine ->
-   subsystem
-3. reject cycles: a target inside `bin\` or `_ref\` means `a -> b -> a`
-4. reject `templates\` as a target (it would replay the same forward, and `templates\_ref`
-   does not exist)
-5. write the template to `templates\`
-6. refuse to replace a `bin\<name>.exe` that jig did not write, unless `--force`
-7. create `_ref\<name>.exe.tmp.<rand>`, then rename it onto `_ref\<name>.exe`
-8. link the template into `bin\<name>.exe` (copy if linking is unavailable)
-9. append the manifest record
+2. normalize the input and resolve it for inspection: exists -> regular file -> `.exe` ->
+   PE -> machine -> subsystem
+3. reject cycles on the resolved path: inside `bin\` or `_ref\` means `a -> b -> a`
+4. reject a resolved target inside `templates\` (it would replay the same forward, and
+   `templates\_ref` does not exist)
+5. create `root`, `bin\` and `_ref\`
+6. take the lock
+7. write the root marker
+8. write the template to `templates\`
+9. refuse to replace a `bin\<name>.exe` that jig did not write, unless `--force`
+10. check the stored target for idempotence
+11. create `_ref\<name>.exe.tmp.<rand>`, then rename it onto `_ref\<name>.exe`
+12. link the template into `bin\<name>.exe` (copy if linking is unavailable)
+13. append the manifest record
 
-Steps 7 and 8 are in that order because visibility must mean usability: the instant
+Steps 11 and 12 are in that order because visibility must mean usability: the instant
 `bin\<name>.exe` exists, the user can invoke it.
 
-Step 6 is the third face of one rule, because `bin\` may be shared with another package
+Step 9 is the third face of one rule, because `bin\` may be shared with another package
 manager: a file whose digest matches no template is not jig's. `check` reports it as
 `foreign` and never deletes it, `rm` refuses to delete it, and `add` refuses to replace it.
 The refusal happens before `_ref` is written, so it leaves the tree exactly as it was.
 
+`add` stores the normalized path you gave, not the fully resolved one. A Scoop-style
+`current` junction therefore keeps tracking upgrades; existence, PE inspection and cycle
+checks use the resolved path. Pass the versioned path when you want to pin a version.
+
 ### What `check` can repair
+
+`check` reads without the lock. `check --fix` takes it first, then reloads the manifest, so
+it cannot race an `add` that is halfway through creating a temporary file.
 
 | code | meaning | `--fix` |
 | --- | --- | --- |
 | `missing` | named on the command line, exists nowhere | no |
 | `stale` | manifest record, neither file on disk | drops the record |
-| `orphan` | shim with no `_ref` entry | removes it |
+| `orphan` | manifest record, but `_ref` has no entry | removes the shim |
 | `half` | `_ref` entry with no shim | removes the entry |
 | `not-symlink` | `_ref` entry is not a symlink | no |
 | `dangling` | link target is gone | no |
@@ -188,12 +203,16 @@ The refusal happens before `_ref` is written, so it leaves the tree exactly as i
 | `not-pe` | target is not a PE image | no |
 | `template` | shim differs from its template | relinks from the template |
 | `foreign` | executable in `bin` that `jig` never wrote | **never touches it** |
+| `unregistered-shim` | bytes match a template, but no manifest record | never deletes |
 | `unregistered` | executable in `bin` not in the manifest | never deletes |
 
-`orphan` only fires when the digest matches a template. An executable `jig` did not write
-belongs to whoever put it there, and deleting it would be data loss - which matters because
-`bin` may be a directory shared with another package manager. `jig.exe` itself is excluded
-from the inventory so that `jig check --fix` can never remove the manager.
+A digest match proves the file contains wshim, not that `jig` created it. The manifest
+record is the ownership proof: `orphan` removes a shim only when a record says `jig` put it
+there. Matching bytes without a record are reported as `unregistered-shim` and kept.
+An executable `jig` did not write belongs to whoever put it there, and deleting it would be
+data loss - which matters because `bin` may be shared with another package manager.
+`jig.exe` itself is excluded from the inventory so that `jig check --fix` can never remove
+the manager.
 
 After a template upgrade, an orphan written by the previous version matches no current
 template and is reported as `foreign`, so it is kept. Once the bytes change, ownership

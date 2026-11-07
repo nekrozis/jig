@@ -63,6 +63,14 @@ func cmdCheck(l layout, args []string) error {
 		}
 	}
 
+	if fix {
+		unlock, err := l.acquire()
+		if err != nil {
+			return err
+		}
+		defer unlock()
+	}
+
 	st, _, err := l.loadState()
 	if err != nil {
 		return err
@@ -164,12 +172,18 @@ func (c *checker) checkName(name string, registered bool) {
 			})
 
 	case s.HasShim && !s.HasRef:
-		// Only bytes jig actually wrote may be deleted as an orphan. An
-		// executable jig never created belongs to whoever put it there, and
-		// deleting it would be data loss.
+		// Bytes matching a template prove the file contains wshim, not that
+		// jig created it. The manifest record is the ownership proof: without
+		// one, another manager may have put the same binary here.
 		if !isShimBytes(s.ShimSHA) {
 			c.report(name, "warn", "foreign",
 				"executable under bin was not written by jig (digest matches no template); left untouched",
+				"", nil)
+			break
+		}
+		if !registered {
+			c.report(name, "warn", "unregistered-shim",
+				"executable matches a template but has no manifest record; left untouched",
 				"", nil)
 			break
 		}

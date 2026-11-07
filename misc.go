@@ -189,7 +189,17 @@ func cmdInit(l layout, args []string) error {
 			return usageErr("unknown option %s", a)
 		}
 	}
-	if err := l.ensure(); err != nil {
+	if err := l.ensureDirs(); err != nil {
+		return err
+	}
+
+	unlock, err := l.acquire()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	if err := l.ensureMarker(); err != nil {
 		return err
 	}
 	for _, sub := range []uint16{subsystemCUI, subsystemGUI} {

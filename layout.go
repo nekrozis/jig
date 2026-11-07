@@ -110,12 +110,19 @@ func hasMarker(dir string) bool {
 // ensure creates the minimal skeleton. bin\ and _ref\ are both writable;
 // templates\ is created on demand by whoever needs it.
 func (l layout) ensure() error {
+	if err := l.ensureDirs(); err != nil {
+		return err
+	}
+	return l.ensureMarker()
+}
+
+func (l layout) ensureDirs() error {
 	for _, d := range []string{l.root, l.bin(), l.ref()} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return fail(exitPartial, "cannot create directory %s: %v", d, err)
 		}
 	}
-	return l.ensureMarker()
+	return nil
 }
 
 // ensureMarker records that this directory really is a jig root, so that later

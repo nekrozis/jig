@@ -62,29 +62,24 @@ func cmdAdd(l layout, args []string) error {
 		seen[k] = true
 	}
 
-	target, subsystem, err := inspectTarget(targetArg, allowScript)
+	target, final, subsystem, err := inspectTarget(targetArg, allowScript)
 	if err != nil {
 		return err
 	}
-	// Cycle check: a target living inside the shim directory means a -> b -> a,
-	// or a -> a, and the chain would never terminate.
-	if within(l.ref(), target) || within(l.bin(), target) {
+	// Cycle check on the resolved path: a symlink or junction into the shim
+	// tree would otherwise hide a -> b -> a behind a stable-looking name.
+	if within(l.ref(), final) || within(l.bin(), final) {
 		return fail(exitInvalid, "target is inside the shim directory and would form a cycle: %s",
-			stripLong(target))
+			stripLong(final))
 	}
 	// Pointing at a template just replays the same forward once more; it also
 	// cannot work, because templates\_ref does not exist.
-	if within(l.tpl(), target) {
+	if within(l.tpl(), final) {
 		return fail(exitInvalid, "target is a shim template, not a runnable program: %s",
-			stripLong(target))
+			stripLong(final))
 	}
 
-	if err := l.ensure(); err != nil {
-		return err
-	}
-	// Templates go first: every action that can fail happens before
-	// bin\<name>.exe exists.
-	if _, _, err := l.ensureTemplate(subsystem); err != nil {
+	if err := l.ensureDirs(); err != nil {
 		return err
 	}
 
@@ -93,6 +88,16 @@ func cmdAdd(l layout, args []string) error {
 		return err
 	}
 	defer unlock()
+
+	if err := l.ensureMarker(); err != nil {
+		return err
+	}
+	// Templates go first: every action that can fail happens before
+	// bin\<name>.exe exists. The lock is already held, so a concurrent
+	// check --fix cannot remove the temporary file while it is being renamed.
+	if _, _, err := l.ensureTemplate(subsystem); err != nil {
+		return err
+	}
 
 	st, _, err := l.loadState()
 	if err != nil {
@@ -155,7 +160,7 @@ func addOne(l layout, name, target string, subsystem uint16, force bool, registe
 	}
 
 	if _, err := os.Lstat(entry); err == nil {
-		if cur, err := resolveFinal(entry); err == nil && samePath(cur, target) {
+		if cur, err := os.Readlink(entry); err == nil && samePath(cur, target) {
 			linkOK = true
 		} else if !force {
 			cur, err := os.Readlink(entry)
@@ -211,57 +216,66 @@ func addOne(l layout, name, target string, subsystem uint16, force bool, registe
 // inspectTarget checks, in order: exists, regular file, .exe, PE, machine,
 // subsystem. The order carries meaning - the first failure gives the most
 // specific explanation, so the user sees the real cause.
-func inspectTarget(raw string, allowScript bool) (string, uint16, error) {
-	final, err := resolveFinal(raw)
+func inspectTarget(raw string, allowScript bool) (string, string, uint16, error) {
+	abs, err := filepath.Abs(raw)
+	if err != nil {
+		return "", "", 0, fail(exitInvalid, "target path is invalid: %s", raw)
+	}
+	abs = filepath.Clean(abs)
+
+	// final exists for validation only. The stored target keeps the path the
+	// user gave, so a package manager's "current" junction keeps following
+	// upgrades instead of being frozen to one version.
+	final, err := filepath.EvalSymlinks(abs)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return "", 0, fail(exitInvalid, "target does not exist: %s", raw)
+			return "", "", 0, fail(exitInvalid, "target does not exist: %s", raw)
 		}
-		return "", 0, fail(exitInvalid, "target cannot be resolved: %v", err)
+		return "", "", 0, fail(exitInvalid, "target cannot be resolved: %v", err)
 	}
 
 	info, err := os.Stat(final)
 	if err != nil {
-		return "", 0, fail(exitInvalid, "cannot read target: %v", err)
+		return "", "", 0, fail(exitInvalid, "cannot read target: %v", err)
 	}
 	if !info.Mode().IsRegular() {
-		return "", 0, fail(exitInvalid, "target is not a regular file: %s", stripLong(final))
+		return "", "", 0, fail(exitInvalid, "target is not a regular file: %s", stripLong(final))
 	}
 
-	switch strings.ToLower(filepath.Ext(final)) {
+	switch strings.ToLower(filepath.Ext(abs)) {
 	case ".bat", ".cmd":
 		if !allowScript {
-			return "", 0, fail(exitInvalid,
+			return "", "", 0, fail(exitInvalid,
 				"%s is a batch file: its arguments get re-parsed by cmd.exe, so %% ^ & are eaten\n"+
-					"  pass --allow-script if you really need this", stripLong(final))
+					"  pass --allow-script if you really need this", stripLong(abs))
 		}
-		return final, subsystemCUI, nil
+		return abs, final, subsystemCUI, nil
 	case ".exe":
 		// fine
 	default:
-		return "", 0, fail(exitInvalid,
+		return "", "", 0, fail(exitInvalid,
 			"target must carry an .exe extension: %s\n"+
 				"  without one, std's resolve_exe tries %s.exe first and may quietly launch a neighbour",
-			stripLong(final), stripLong(final))
+			stripLong(abs), stripLong(abs))
 	}
 
 	h, err := readPE(final)
 	if err != nil {
-		return "", 0, fail(exitInvalid, "%s: %v", stripLong(final), err)
+		return "", "", 0, fail(exitInvalid, "%s: %v", stripLong(final), err)
 	}
 	if h.Machine == 0xaa64 {
-		return "", 0, fail(exitInvalid,
+		return "", "", 0, fail(exitInvalid,
 			"arm64 target is not supported: the embedded shim is x64 and would fail to start: %s",
 			stripLong(final))
 	}
 	if _, ok := machineNames[h.Machine]; !ok {
-		return "", 0, fail(exitInvalid, "unsupported machine 0x%04X: %s", h.Machine, stripLong(final))
+		return "", "", 0, fail(exitInvalid, "unsupported machine 0x%04X: %s", h.Machine, stripLong(final))
 	}
 	if h.Subsystem != subsystemCUI && h.Subsystem != subsystemGUI {
-		return "", 0, fail(exitInvalid, "unsupported subsystem %d (only 2=GUI / 3=console): %s",
+		return "", "", 0, fail(exitInvalid, "unsupported subsystem %d (only 2=GUI / 3=console): %s",
 			h.Subsystem, stripLong(final))
 	}
-	return final, h.Subsystem, nil
+	return abs, final, h.Subsystem, nil
 }
 
 // validateName rejects names that look acceptable but would be silently

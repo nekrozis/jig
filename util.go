@@ -71,21 +71,6 @@ func writeAtomic(path string, data []byte, perm os.FileMode) error {
 	return os.Rename(tmp, path)
 }
 
-// resolveFinal expands every reparse point and returns the final path without
-// the \\?\ prefix. A missing target surfaces as an error wrapping
-// os.ErrNotExist - which is exactly the "dangling" predicate.
-func resolveFinal(path string) (string, error) {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	final, err := filepath.EvalSymlinks(abs)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Clean(final), nil
-}
-
 // createSymlink creates a file-level symlink. The target must be absolute:
 // that is a runtime contract, not a preference.
 func createSymlink(target, link string) error {
