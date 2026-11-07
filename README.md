@@ -224,3 +224,7 @@ No external modules. `go 1.21` or newer.
 - No PATH editing. `jig path` prints the directory; changing the environment is the
   caller's business.
 - No arm64 targets: the embedded shim is x64, so such a shim would fail at launch.
+
+## License
+
+BSD 3-Clause. See [LICENSE](LICENSE).
