@@ -76,7 +76,7 @@ jobs:
 
           $version = (& (Join-Path $dist 'jig.exe') version | Select-Object -First 1).Trim()
           $want = "jig $($tag.Substring(1))"
-          if ($version -ne $want) {
+          if (-not ($version -eq $want -or $version.StartsWith("$want "))) {
             throw "embedded version is '$version', tag expects '$want'"
           }
 
