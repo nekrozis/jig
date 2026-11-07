@@ -93,8 +93,9 @@ jobs:
           Write-Host "rebuild matched: $rebuildHash"
 
           $version = (& (Join-Path $dist 'jig.exe') version | Select-Object -First 1).Trim()
-          if ($version -ne "jig $($tag.Substring(1))") {
-            throw "embedded version is '$version'"
+          $want = "jig $($tag.Substring(1))"
+          if (-not ($version -eq $want -or $version.StartsWith("$want "))) {
+            throw "embedded version is '$version', tag expects '$want'"
           }
 
           $exists = $false
