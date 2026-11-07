@@ -233,7 +233,7 @@ point: the pinned digests are a compile-time contract, not a runtime guess.
 $ go build -trimpath -ldflags "-s -w" -o jig.exe .
 ```
 
-No external modules. `go 1.21` or newer.
+No external modules. `go 1.27.3` or newer.
 
 ## Non-goals
 

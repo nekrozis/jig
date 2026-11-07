@@ -34,7 +34,7 @@ A contract violation is a silent abort, not an error message. Therefore:
 | --- | --- |
 | Role | the only program allowed to create, modify or delete shim structure |
 | When it runs | install, upgrade, uninstall, troubleshooting. **Never on the forwarding path** |
-| Language | Go 1.21+, standard library only (`syscall` only for `CreateFileW` locking) |
+| Language | Go 1.27.3+, standard library only (`syscall` only for `CreateFileW` locking) |
 | Distribution | one `jig.exe`; `go:embed` carries both templates (3.8 MB total) |
 | Root | `--root` > `$JIG_ROOT` > nearest `.jig-root` marker above `jig.exe` |
 | Not done | PATH editing, registry writes, version management, running anything |
