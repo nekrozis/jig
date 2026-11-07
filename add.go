@@ -33,11 +33,23 @@ func cmdAdd(l layout, args []string) error {
 			pos = append(pos, a)
 		}
 	}
-	if len(pos) != 2 {
-		return usageErr("usage: jig add <name> <target> [--as <alias>]... [--force] [--allow-script]")
+	var name, targetArg string
+	switch len(pos) {
+	case 1:
+		targetArg = pos[0]
+		derived, err := defaultName(targetArg)
+		if err != nil {
+			return fail(exitInvalid,
+				"cannot derive a name from %s: %v\n  use: jig add <name> <target>", stripLong(targetArg), err)
+		}
+		name = derived
+	case 2:
+		name, targetArg = pos[0], pos[1]
+	default:
+		return usageErr("usage: jig add [<name>] <target> [--as <alias>]... [--force] [--allow-script]")
 	}
 
-	names := append([]string{pos[0]}, aliases...)
+	names := append([]string{name}, aliases...)
 	seen := map[string]bool{}
 	for _, n := range names {
 		if err := validateName(n); err != nil {
@@ -50,7 +62,7 @@ func cmdAdd(l layout, args []string) error {
 		seen[k] = true
 	}
 
-	target, subsystem, err := inspectTarget(pos[1], allowScript)
+	target, subsystem, err := inspectTarget(targetArg, allowScript)
 	if err != nil {
 		return err
 	}
@@ -254,6 +266,23 @@ func inspectTarget(raw string, allowScript bool) (string, uint16, error) {
 
 // validateName rejects names that look acceptable but would be silently
 // rewritten by Win32.
+func defaultName(target string) (string, error) {
+	base := filepath.Base(target)
+	for _, ext := range []string{".exe", ".bat", ".cmd"} {
+		if strings.EqualFold(filepath.Ext(base), ext) {
+			base = strings.TrimSuffix(base, filepath.Ext(base))
+			break
+		}
+	}
+	if base == "" {
+		return "", errors.New("the target has no file name")
+	}
+	if err := validateName(base); err != nil {
+		return "", err
+	}
+	return base, nil
+}
+
 func validateName(n string) error {
 	if n == "" || len(n) > 127 {
 		return errors.New("length must be between 1 and 127")

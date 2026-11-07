@@ -164,7 +164,7 @@ Usage:
   jig [--root <dir>] <subcommand> [args...]
 
 Subcommands:
-  add     <name> <target> [--as <alias>]... [--force] [--allow-script]
+  add     [<name>] <target> [--as <alias>]... [--force] [--allow-script]
   rm      <name>... [--force] [--keep-target]
   ls      [--json]
   check   [<name>...] [--fix] [--json]

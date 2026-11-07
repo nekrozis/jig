@@ -133,7 +133,7 @@ is always self-describing afterwards.
 ```
 jig [--root <dir>] <subcommand> [args...]
 
-add     <name> <target> [--as <alias>]... [--force] [--allow-script]
+add     [<name>] <target> [--as <alias>]... [--force] [--allow-script]
 rm      <name>... [--force] [--keep-target]
 ls      [--json]
 check   [<name>...] [--fix] [--json]
@@ -160,7 +160,7 @@ string, and never mixed with warnings on stdout.
 
 | # | Step | On failure |
 | --- | --- | --- |
-| 1 | validate every requested name (target name plus aliases), reject case-insensitive duplicates | exit 3 |
+| 1 | derive the name when omitted (target basename without `.exe`/`.bat`/`.cmd`), validate it plus aliases, reject case-insensitive duplicates | exit 3 |
 | 2 | resolve the target with `filepath.EvalSymlinks` | `ENOENT` -> exit 3; a path that does not exist is never accepted |
 | 3 | inspect the target: regular file -> `.exe` -> PE -> machine -> subsystem | exit 3 |
 | 4 | cycle detection: a target inside `bin\` or `_ref\` means `a -> b -> a` | exit 3 |
@@ -191,6 +191,9 @@ and the temporary name always contains `.tmp.` so `check` and `gc` can recognise
 ## 7. Validation rules
 
 ### 7.1 Names
+
+When the name is omitted, it is the target's basename with `.exe`, `.bat` or `.cmd`
+removed; the rules below then apply to the result.
 
 | Rule | Reason |
 | --- | --- |
@@ -353,3 +356,4 @@ Each item was executed against a real tree; `[x]` means observed, not assumed.
 | 20 | `add` at the 1024-link ceiling | template rolls to a new inode, shim is still a link |
 | 21 | `add` a shim template as the target | exit 3, cycle refused |
 | 22 | `add` an unchanged entry twice | no new manifest event |
+| 23 | `add <target>` without a name | shim name is the target basename |

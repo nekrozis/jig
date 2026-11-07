@@ -12,6 +12,7 @@ because a contract violation at runtime is a process abort rather than a readabl
 manifest that lets `check` prove the tree is still coherent.
 
 ```
+jig.exe add "C:\Program Files\Git\cmd\git.exe"   :: shim name is git
 jig.exe add git "C:\Program Files\Git\cmd\git.exe"
 git --version          :: now goes through <root>\bin\git.exe
 ```
@@ -135,7 +136,7 @@ the refresh fails cleanly otherwise, and the same command can be retried.
 ```
 jig [--root <dir>] <subcommand> [args...]
 
-add     <name> <target> [--as <alias>]... [--force] [--allow-script]
+add     [<name>] <target> [--as <alias>]... [--force] [--allow-script]
 rm      <name>... [--force] [--keep-target]
 ls      [--json]
 check   [<name>...] [--fix] [--json]
@@ -151,8 +152,8 @@ privilege, `5` lock contention.
 
 ### `add` order is not negotiable
 
-1. validate the name (reserved device names, trailing dot/space, `.exe` suffix, path
-   separators)
+1. validate the name (explicit, or the target's basename without `.exe`/`.bat`/`.cmd`;
+   reserved device names, trailing dot/space, path separators are rejected)
 2. resolve the target and inspect it: exists -> regular file -> `.exe` -> PE -> machine ->
    subsystem
 3. reject cycles: a target inside `bin\` or `_ref\` means `a -> b -> a`
