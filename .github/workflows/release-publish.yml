@@ -7,7 +7,7 @@ on:
         description: release-build run ID
         required: true
       tag:
-        description: Tag to draft (for example v0.4.0)
+        description: Tag to draft (for example v0.1.0)
         required: true
 
 permissions:

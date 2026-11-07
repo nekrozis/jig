@@ -43,7 +43,7 @@ toolchain, linker, flags), kept verbatim so the provenance can be audited offlin
 
 ```console
 $ jig version
-jig 0.4.0 (go1.27.3)
+jig 0.1.0 (go1.27.3)
 templates from nekrozis/wshim v0.3.0 (2a652f9222d9)
   wshim-c.exe  sha256=4b2cb490...9f7ce7  size=310784  subsystem=3
   wshim-w.exe  sha256=a2943cc4...51183c3  size=310784  subsystem=2
