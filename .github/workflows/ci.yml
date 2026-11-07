@@ -1,0 +1,54 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        shell: pwsh
+        run: |
+          $files = gofmt -l .
+          if ($files) {
+            $files
+            exit 1
+          }
+
+      - name: vet
+        run: go vet ./...
+
+      - name: test
+        run: go test ./...
+
+      - name: build
+        shell: pwsh
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          go build -trimpath -ldflags "-s -w" -o jig.exe .
+          $hash = (Get-FileHash -Algorithm SHA256 jig.exe).Hash.ToLower()
+          "sha256  $hash  jig.exe" | Set-Content -Encoding ascii jig.exe.sha256
+          Get-Content jig.exe.sha256
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: jig-windows-amd64
+          path: |
+            jig.exe
+            jig.exe.sha256
+          if-no-files-found: error
