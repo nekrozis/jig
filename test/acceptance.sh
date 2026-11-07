@@ -34,7 +34,7 @@ R="$work/root"
 # 1. version works with no root at all
 out="$("$JIG" version 2>&1)"
 chk "1  version without a root exits 0" "0" "$?"
-contains "1  version prints the pinned digest" "65027fea0dd526e98301184e070468adf9352d7cd99e0ff0af572a640fe488e3" "$out"
+contains "1  version prints the pinned digest" "4b2cb490278bd226a92a2c40eb705464edc3c08ab536a969f24c3cb1899f7ce7" "$out"
 
 # 2. no marker anywhere above the executable -> usage error
 mkdir -p "$work/lone"
@@ -47,7 +47,7 @@ contains "2  the error names the marker" ".jig-root" "$out"
 "$JIG" init --root "$R" >/dev/null 2>&1
 chk "3  init exits 0" "0" "$?"
 chk "3  marker written" "yes" "$([ -f "$R/.jig-root" ] && echo yes || echo no)"
-chk "3  ref directory created" "yes" "$([ -d "$R/bin/.ref" ] && echo yes || echo no)"
+chk "3  ref directory created" "yes" "$([ -d "$R/bin/_ref" ] && echo yes || echo no)"
 
 # 4. jig installed inside bin finds the root by marker
 cp "$JIG" "$R/bin/jig.exe"
@@ -64,8 +64,8 @@ contains "5  shim forwards stdout" "\\" "$out"
 "$JIG" --root "$R" add np 'C:\Windows\System32\notepad.exe' >/dev/null 2>&1
 cui_sum="$(sha256sum "$bin/whoami.exe" | cut -d' ' -f1)"
 gui_sum="$(sha256sum "$bin/np.exe" | cut -d' ' -f1)"
-chk "6  console target uses wshim-c.exe" "65027fea0dd526e98301184e070468adf9352d7cd99e0ff0af572a640fe488e3" "$cui_sum"
-chk "7  gui target uses wshim-w.exe" "b3cdb49fbbeba420de0b85a4d121623661ec5b285ef1825d5741950501cf8deb" "$gui_sum"
+chk "6  console target uses wshim-c.exe" "4b2cb490278bd226a92a2c40eb705464edc3c08ab536a969f24c3cb1899f7ce7" "$cui_sum"
+chk "7  gui target uses wshim-w.exe" "a2943cc4a280512fbdc605ae69cdce5cac10c657d9d056cde522bb19751183c3" "$gui_sum"
 
 # 8. idempotent re-add
 "$JIG" --root "$R" add whoami 'C:\Windows\System32\whoami.exe' >/dev/null 2>&1
@@ -97,27 +97,27 @@ chk "13 foreign file is not deleted" "yes" "$([ -f "$bin/foreign.exe" ] && echo 
 rm -f "$bin/foreign.exe"
 
 # 13b. add refuses to replace a file jig did not write, and refuses before
-#      touching .ref so a refusal cannot leave a half-written entry behind
+#      touching _ref so a refusal cannot leave a half-written entry behind
 cp /c/Windows/System32/hostname.exe "$bin/taken.exe"
 before="$(sha256sum "$bin/taken.exe" | cut -c1-16)"
 "$JIG" --root "$R" add taken 'C:\Windows\System32\whoami.exe' >/dev/null 2>&1
 chk "13b add refuses to overwrite a foreign file" "3" "$?"
 chk "13b the foreign file is untouched" "$before" "$(sha256sum "$bin/taken.exe" | cut -c1-16)"
-chk "13b the refusal left no .ref entry" "no" "$([ -e "$bin/.ref/taken.exe" ] && echo yes || echo no)"
+chk "13b the refusal left no _ref entry" "no" "$([ -e "$bin/_ref/taken.exe" ] && echo yes || echo no)"
 "$JIG" --root "$R" add taken 'C:\Windows\System32\whoami.exe' --force >/dev/null 2>&1
 chk "13b --force does replace it" "0" "$?"
 "$JIG" --root "$R" rm taken >/dev/null 2>&1
 
 # 14. relative link is rewritten
 "$JIG" --root "$R" rm np >/dev/null 2>&1
-rm -f "$R/bin/.ref/whoami.exe"
+rm -f "$R/bin/_ref/whoami.exe"
 # Python is a native Windows build: hand it a Windows cwd and let it compute the
 # relative path, instead of guessing how many ".." reach C:\.
 (cd "$bin" && python -c "
 import os, sys
 d = os.path.abspath(sys.argv[1])
 os.symlink(os.path.relpath(r'C:\Windows\System32\whoami.exe', d), os.path.join(d, 'whoami.exe'))
-" '.ref') || echo "      (python unavailable, relative-link checks skipped)"
+" '_ref') || echo "      (python unavailable, relative-link checks skipped)"
 out="$("$JIG" --root "$R" check 2>&1)"
 contains "14 relative link detected" "relative" "$out"
 "$JIG" --root "$R" check --fix >/dev/null 2>&1
@@ -199,6 +199,16 @@ chk "20 the new shim is a link, not a copy" "same" "$(
 	[ -n "$i1" ] && [ "$i1" = "$i2" ] && echo same || echo different
 )"
 chk "20 shim created at the ceiling runs" "0" "$("$bin/ceilprobe.exe" >/dev/null 2>&1; echo $?)"
+
+# 21. a template is not a runnable target, even though it is a PE image
+"$JIG" --root "$R" add tpl "$R/templates/wshim-c.exe" >/dev/null 2>&1
+chk "21 template target is refused" "3" "$?"
+
+# 22. re-adding an unchanged entry writes no new manifest event
+before="$(wc -l < "$R/shim.db")"
+"$JIG" --root "$R" add whoami 'C:\Windows\System32\whoami.exe' >/dev/null 2>&1
+after="$(wc -l < "$R/shim.db")"
+chk "22 idempotent add does not grow shim.db" "$before" "$after"
 
 echo
 echo "$pass passed, $fail failed"

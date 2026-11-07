@@ -19,15 +19,15 @@ const (
 // from root, so no caller has to re-invent a join and drift out of sync.
 //
 // One constraint is inherited from wshim and cannot be redesigned here: the
-// .ref directory must be a sibling child of the shims themselves, because a
-// running shim resolves <its own directory>\.ref\<its own file name>. Moving
-// .ref anywhere else breaks every shim at runtime, silently.
+// _ref directory must be a sibling child of the shims themselves, because a
+// running shim resolves <its own directory>\_ref\<its own file name>. Moving
+// _ref anywhere else breaks every shim at runtime, silently.
 type layout struct {
 	root string
 }
 
 func (l layout) bin() string      { return filepath.Join(l.root, "bin") }
-func (l layout) ref() string      { return filepath.Join(l.root, "bin", ".ref") }
+func (l layout) ref() string      { return filepath.Join(l.root, "bin", "_ref") }
 func (l layout) tpl() string      { return filepath.Join(l.root, "templates") }
 func (l layout) db() string       { return filepath.Join(l.root, "shim.db") }
 func (l layout) lockPath() string { return filepath.Join(l.root, ".lock") }
@@ -41,7 +41,7 @@ func (l layout) entry(name string) string { return filepath.Join(l.ref(), name+"
 // jig deliberately does not adopt its own directory as the root. Package
 // managers install tools wherever they like - scoop\apps\jig\current, a
 // per-user tools folder, a winget link farm - and treating that location as
-// the shim root would scatter bin\, .ref\ and shim.db into a tree jig does not
+// the shim root would scatter bin\, _ref\ and shim.db into a tree jig does not
 // own. The root is therefore always something stated up front:
 //
 //  1. --root <path>
@@ -107,7 +107,7 @@ func hasMarker(dir string) bool {
 	return err == nil && info.Mode().IsRegular()
 }
 
-// ensure creates the minimal skeleton. bin\ and .ref\ are both writable;
+// ensure creates the minimal skeleton. bin\ and _ref\ are both writable;
 // templates\ is created on demand by whoever needs it.
 func (l layout) ensure() error {
 	for _, d := range []string{l.root, l.bin(), l.ref()} {

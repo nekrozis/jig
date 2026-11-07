@@ -2,13 +2,13 @@
 
 `jig` installs and maintains [wshim](https://github.com/nekrozis/wshim) shims on Windows.
 
-A wshim shim is an executable that resolves `<its own directory>\.ref\<its own file name>`
+A wshim shim is an executable that resolves `<its own directory>\_ref\<its own file name>`
 as a symbolic link and launches the link target with the same arguments, environment,
 standard handles and working directory. At runtime it is two statements: `read_link`, then
 `spawn`. Everything that can go wrong therefore has to be prevented at install time,
 because a contract violation at runtime is a process abort rather than a readable error.
 
-`jig` is that install-time half. It owns the `.ref` entries, the shims, and a
+`jig` is that install-time half. It owns the `_ref` entries, the shims, and a
 manifest that lets `check` prove the tree is still coherent.
 
 ```
@@ -19,7 +19,7 @@ git --version          :: now goes through <root>\bin\git.exe
 ## The binaries are upstream, unmodified
 
 `jig` embeds the official `wshim-c.exe` and `wshim-w.exe` from
-[`nekrozis/wshim` **v0.2.0**](https://github.com/nekrozis/wshim/releases/tag/v0.2.0)
+[`nekrozis/wshim` **v0.3.0**](https://github.com/nekrozis/wshim/releases/tag/v0.3.0)
 verbatim. It does not build them.
 
 The reason is provenance, not convenience. A locally compiled Rust/MSVC binary is a byte
@@ -30,8 +30,8 @@ GitHub-hosted workflow run, so anyone can verify where the code came from.
 
 | file | size | sha256 |
 | --- | --- | --- |
-| `wshim-c.exe` | 310272 | `65027fea0dd526e98301184e070468adf9352d7cd99e0ff0af572a640fe488e3` |
-| `wshim-w.exe` | 310272 | `b3cdb49fbbeba420de0b85a4d121623661ec5b285ef1825d5741950501cf8deb` |
+| `wshim-c.exe` | 310784 | `4b2cb490278bd226a92a2c40eb705464edc3c08ab536a969f24c3cb1899f7ce7` |
+| `wshim-w.exe` | 310784 | `a2943cc4a280512fbdc605ae69cdce5cac10c657d9d056cde522bb19751183c3` |
 
 The digests are pinned in `asset.go` and re-checked on every start, so a build that picked
 up the wrong file fails immediately instead of producing shims that forward somewhere
@@ -42,10 +42,10 @@ toolchain, linker, flags), kept verbatim so the provenance can be audited offlin
 
 ```console
 $ jig version
-jig 0.3.0 (go1.27.3)
-templates from nekrozis/wshim v0.2.0 (9635fe2b46b5)
-  wshim-c.exe  sha256=65027fea...fe488e3  size=310272  subsystem=3
-  wshim-w.exe  sha256=b3cdb49f...c1cf8deb  size=310272  subsystem=2
+jig 0.4.0 (go1.27.3)
+templates from nekrozis/wshim v0.3.0 (2a652f9222d9)
+  wshim-c.exe  sha256=4b2cb490...9f7ce7  size=310784  subsystem=3
+  wshim-w.exe  sha256=a2943cc4...51183c3  size=310784  subsystem=2
 ```
 
 Compare those two digests with `sha256.txt` on the upstream release. That is the only
@@ -56,8 +56,8 @@ To check the release itself:
 ```console
 $ gh attestation verify wshim-c.exe --repo nekrozis/wshim \
     --signer-workflow nekrozis/wshim/.github/workflows/release-build.yml \
-    --source-digest 9635fe2b46b5277aae17a7143cb97d7f64d39a07 \
-    --source-ref refs/tags/v0.2.0
+    --source-digest 2a652f9222d9b5d3978a57c5025dd052bf30e98a \
+    --source-ref refs/tags/v0.3.0
 ```
 
 ## Install
@@ -74,7 +74,7 @@ can live anywhere, including inside `<root>\bin`.
 
 `jig` never assumes its own directory is the root. Package managers install tools wherever
 they like - `scoop\apps\jig\current`, a per-user tools folder, a winget link farm - and
-adopting that directory as the shim root would scatter `bin\`, `.ref\` and `shim.db` into a
+adopting that directory as the shim root would scatter `bin\`, `_ref\` and `shim.db` into a
 tree `jig` does not own.
 
 Resolution order:
@@ -99,16 +99,16 @@ assumption. Installed anywhere else, `jig` finds no marker and tells you to pass
   bin\                <- put this on PATH
     jig.exe           optional; jig can live here
     <name>.exe        hard link to one template (copy where linking is impossible)
-    .ref\
+    _ref\
       <name>.exe      absolute symlink -> the real program
 ```
 
-`.ref` must be a sibling child of the shims, not a sibling of `bin`. A running shim
-resolves `<its own directory>\.ref\<its own file name>`, so moving `.ref` anywhere else
+`_ref` must be a sibling child of the shims, not a sibling of `bin`. A running shim
+resolves `<its own directory>\_ref\<its own file name>`, so moving `_ref` anywhere else
 breaks every shim at runtime, silently.
 
 A shim is a real file of its own, never a symlink to the target: launching it yields
-`GetModuleFileNameW` = `<root>\bin\<name>.exe`, and the shim reads `.ref\<name>.exe` next to
+`GetModuleFileNameW` = `<root>\bin\<name>.exe`, and the shim reads `_ref\<name>.exe` next to
 itself. Taking a symlink or a junction to the target instead works too, but only a real file
 keeps the two names independent of each other.
 
@@ -126,6 +126,9 @@ always replaces it through a temp file and a rename, which detaches the old inod
 than mutating it, so an upgrade cannot rewrite the bytes its shims are pointing at. An
 outside program that truncates a template in place breaks every linked shim at once;
 `jig check` names them all and `--fix` restores them from the embedded copy.
+
+Windows cannot replace an image that is in use. Close running shims before upgrading;
+the refresh fails cleanly otherwise, and the same command can be retried.
 
 ## Commands
 
@@ -152,12 +155,12 @@ privilege, `5` lock contention.
    separators)
 2. resolve the target and inspect it: exists -> regular file -> `.exe` -> PE -> machine ->
    subsystem
-3. reject cycles: a target inside `bin\` or `.ref\` means `a -> b -> a`
-4. reject `templates\` as a target (it would replay the same forward, and `templates\.ref`
+3. reject cycles: a target inside `bin\` or `_ref\` means `a -> b -> a`
+4. reject `templates\` as a target (it would replay the same forward, and `templates\_ref`
    does not exist)
 5. write the template to `templates\`
 6. refuse to replace a `bin\<name>.exe` that jig did not write, unless `--force`
-7. create `.ref\<name>.exe.tmp.<rand>`, then rename it onto `.ref\<name>.exe`
+7. create `_ref\<name>.exe.tmp.<rand>`, then rename it onto `_ref\<name>.exe`
 8. link the template into `bin\<name>.exe` (copy if linking is unavailable)
 9. append the manifest record
 
@@ -167,7 +170,7 @@ Steps 7 and 8 are in that order because visibility must mean usability: the inst
 Step 6 is the third face of one rule, because `bin\` may be shared with another package
 manager: a file whose digest matches no template is not jig's. `check` reports it as
 `foreign` and never deletes it, `rm` refuses to delete it, and `add` refuses to replace it.
-The refusal happens before `.ref` is written, so it leaves the tree exactly as it was.
+The refusal happens before `_ref` is written, so it leaves the tree exactly as it was.
 
 ### What `check` can repair
 
@@ -175,12 +178,12 @@ The refusal happens before `.ref` is written, so it leaves the tree exactly as i
 | --- | --- | --- |
 | `missing` | named on the command line, exists nowhere | no |
 | `stale` | manifest record, neither file on disk | drops the record |
-| `orphan` | shim with no `.ref` entry | removes it |
-| `half` | `.ref` entry with no shim | removes the entry |
-| `not-symlink` | `.ref` entry is not a symlink | no |
+| `orphan` | shim with no `_ref` entry | removes it |
+| `half` | `_ref` entry with no shim | removes the entry |
+| `not-symlink` | `_ref` entry is not a symlink | no |
 | `dangling` | link target is gone | no |
-| `cycle` | target resolves inside the shim directory | no |
-| `relative` | relative link, depends on the shape of `.ref` | rewrites absolute |
+| `cycle` | target resolves inside `bin\`, `_ref\`, or `templates\` | no |
+| `relative` | relative link, depends on the shape of `_ref` | rewrites absolute |
 | `not-pe` | target is not a PE image | no |
 | `template` | shim differs from its template | relinks from the template |
 | `foreign` | executable in `bin` that `jig` never wrote | **never touches it** |
@@ -190,6 +193,10 @@ The refusal happens before `.ref` is written, so it leaves the tree exactly as i
 belongs to whoever put it there, and deleting it would be data loss - which matters because
 `bin` may be a directory shared with another package manager. `jig.exe` itself is excluded
 from the inventory so that `jig check --fix` can never remove the manager.
+
+After a template upgrade, an orphan written by the previous version matches no current
+template and is reported as `foreign`, so it is kept. Once the bytes change, ownership
+cannot be proven, and deleting it would risk someone else's file.
 
 `gc` defaults to a dry run and only handles three things: leftover `.tmp.` files, stale
 manifest records, and compaction when the log exceeds 2000 events or 1 MiB.
@@ -216,3 +223,4 @@ No external modules. `go 1.21` or newer.
   handles and arguments; `jig` never sits in the execution path.
 - No PATH editing. `jig path` prints the directory; changing the environment is the
   caller's business.
+- No arm64 targets: the embedded shim is x64, so such a shim would fail at launch.

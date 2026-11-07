@@ -1,27 +1,31 @@
 {
-  "tag": "v0.2.0",
-  "commit": "9635fe2b46b5277aae17a7143cb97d7f64d39a07",
-  "ref": "refs/tags/v0.2.0",
+  "tag": "v0.3.0",
+  "commit": "2a652f9222d9b5d3978a57c5025dd052bf30e98a",
+  "ref": "refs/tags/v0.3.0",
   "image_os": "win25-vs2026",
-  "image_version": "20261030.294.1",
+  "image_version": "20261103.298.1",
   "target": "x86_64-pc-windows-msvc",
   "toolchain": "1.99.1-x86_64-pc-windows-msvc",
   "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13) | binary: rustc | commit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67 | commit-date: 2026-10-13 | host: x86_64-pc-windows-msvc | release: 1.99.1 | LLVM version: 23.1.1",
   "cargo": "cargo 1.99.1 (5f94df478 2026-08-27)",
   "visual_studio": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise",
-  "link_version": "14.29.30159.0 built by: cloudtest",
+  "msvc_toolsets": [
+    "14.51.36231",
+    "14.44.35207",
+    "14.29.30133"
+  ],
   "sdks": [
     "10.0.26100.0"
   ],
-  "flags": "-C target-feature=+crt-static -C link-arg=/Brepro -C link-arg=/DEBUG:NONE --remap-path-prefix=D:\\a\\_temp\\wshim-release-8376f603b79e4541b80eb7432655ae43\\b=/wshim",
-  "hash_c": "65027FEA0DD526E98301184E070468ADF9352D7CD99E0FF0AF572A640FE488E3",
-  "hash_w": "B3CDB49FBBEBA420DE0B85A4D121623661EC5B285EF1825D5741950501CF8DEB",
-  "pe_time_c": "0xF01E100B",
+  "flags": "-C target-feature=+crt-static -C link-arg=/Brepro -C link-arg=/DEBUG:NONE --remap-path-prefix=<copy>=/wshim",
+  "hash_c": "4B2CB490278BD226A92A2C40EB705464EDC3C08AB536A969F24C3CB1899F7CE7",
+  "hash_w": "A2943CC4A280512FBDC605AE69CDCE5CAC10C657D9D056CDE522BB19751183C3",
+  "pe_time_c": "0x73DFBF6A",
   "pdb": 0,
   "leaks": [],
-  "size_c": 310272,
+  "size_c": 310784,
   "binary_c": {
-    "size": 310272,
+    "size": 310784,
     "dumpbin_available": true,
     "imports": [
       "api-ms-win-core-synch-l1-2-0.dll",
@@ -33,6 +37,7 @@
       ".rdata",
       ".data",
       ".pdata",
+      ".fptable",
       ".reloc"
     ],
     "debug_directory": 1,
@@ -40,11 +45,11 @@
     "pdb_paths": 0,
     "pdb_files": 0,
     "rustc_paths": 39,
-    "pe_time": "0xF01E100B",
+    "pe_time": "0x73DFBF6A",
     "leaks": []
   },
   "binary_w": {
-    "size": 310272,
+    "size": 310784,
     "dumpbin_available": true,
     "imports": [
       "api-ms-win-core-synch-l1-2-0.dll",
@@ -56,6 +61,7 @@
       ".rdata",
       ".data",
       ".pdata",
+      ".fptable",
       ".reloc"
     ],
     "debug_directory": 1,
@@ -63,7 +69,7 @@
     "pdb_paths": 0,
     "pdb_files": 0,
     "rustc_paths": 39,
-    "pe_time": "0x111381EF",
+    "pe_time": "0x7F97A79B",
     "leaks": []
   }
 }

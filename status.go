@@ -14,7 +14,7 @@ type entryStatus struct {
 	HasRef    bool
 	LinkRaw   string // raw readlink output
 	LinkErr   error  // non-nil when the entry is not a symlink
-	Relative  bool   // relative link: depends on the shape of .ref itself
+	Relative  bool   // relative link: depends on the shape of _ref itself
 	Final     string // fully expanded path
 	FinalErr  error  // os.ErrNotExist when dangling
 	Cycle     bool   // final path lands inside the shim directory
@@ -53,7 +53,7 @@ func probeName(l layout, name string) entryStatus {
 		return s
 	}
 	s.Final = final
-	s.Cycle = within(l.ref(), final) || within(l.bin(), final)
+	s.Cycle = within(l.ref(), final) || within(l.bin(), final) || within(l.tpl(), final)
 
 	// A batch file is not a PE image but is still a legal target (std wraps it
 	// in cmd.exe); treat it as console.

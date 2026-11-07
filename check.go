@@ -101,7 +101,7 @@ func cmdCheck(l layout, args []string) error {
 	return nil
 }
 
-// collectNames takes the union of "manifest entries, .ref entries, and *.exe
+// collectNames takes the union of "manifest entries, _ref entries, and *.exe
 // files under bin" - anything that exists has to be checked. Registered
 // distinguishes "in the manifest" from "merely named on the command line",
 // because "neither file exists" means different things in the two cases.
@@ -173,13 +173,13 @@ func (c *checker) checkName(name string, registered bool) {
 				"", nil)
 			break
 		}
-		c.report(name, "bad", "orphan", "shim exists under bin but .ref has no entry (invoking it fails)",
+		c.report(name, "bad", "orphan", "shim exists under bin but _ref has no entry (invoking it fails)",
 			"orphan shim removed", func() error {
 				return os.Remove(c.l.shim(name))
 			})
 
 	case !s.HasShim && s.HasRef:
-		c.report(name, "bad", "half", ".ref has an entry but bin has no shim (half-written)",
+		c.report(name, "bad", "half", "_ref has an entry but bin has no shim (half-written)",
 			"half-written entry removed", func() error {
 				return os.Remove(c.l.entry(name))
 			})
@@ -193,14 +193,15 @@ func (c *checker) checkName(name string, registered bool) {
 		c.report(name, "bad", "dangling", "link target does not exist: "+s.LinkRaw, "", nil)
 
 	case s.Cycle:
-		c.report(name, "bad", "cycle", "target is inside the shim directory: "+stripLong(s.Final), "", nil)
+		c.report(name, "bad", "cycle", "target is inside the shim tree (bin, _ref, or templates): "+stripLong(s.Final), "", nil)
 
 	default:
 		if s.Relative {
+			target := filepath.Join(filepath.Dir(c.l.entry(name)), s.LinkRaw)
 			c.report(name, "warn", "relative",
-				"entry is a relative link and depends on the shape of .ref itself: "+s.LinkRaw,
+				"entry is a relative link and depends on the shape of _ref itself: "+s.LinkRaw,
 				"rewritten as an absolute link", func() error {
-					return c.rewriteLink(name, s.Final)
+					return c.rewriteLink(name, target)
 				})
 		}
 		switch {

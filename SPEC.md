@@ -3,9 +3,9 @@
 > Companion to the runtime layer `github.com/nekrozis/wshim`. This document covers the
 > **install-time** tool only.
 >
-> Version: 2026-11-05, v4 (upstream binaries embedded, root decoupled from the executable).
-> Runtime: `nekrozis/wshim` **v0.2.0**, tag `v0.2.0`, commit
-> `9635fe2b46b5277aae17a7143cb97d7f64d39a07` (`src/lib.rs` + `src/ctrl.rs`).
+> Version: 2026-11-07, v5 (wshim 0.3.0 templates, _ref directory).
+> Runtime: `nekrozis/wshim` **v0.3.0**, tag `v0.3.0`, commit
+> `2a652f9222d9b5d3978a57c5025dd052bf30e98a` (`src/lib.rs` + `src/ctrl.rs`).
 
 ## 0. Fixed behaviour of the embedded template
 
@@ -14,9 +14,9 @@ the manager has to be strict.
 
 | Behaviour | Upstream implementation | Consequence for `jig` |
 | --- | --- | --- |
-| Reading `.ref` | `fs::read_link(link).unwrap()` | the entry **must** be a symlink and must exist |
+| Reading `_ref` | `fs::read_link(link).unwrap()` | the entry **must** be a symlink and must exist |
 | Target legality | `assert!(target.is_absolute())` | a relative target cannot be written at all |
-| Failure mode | panic, `panic = "abort"` | exit code `0xC0000409`, no readable message, nothing on a GUI subsystem |
+| Failure mode | panic hook is silent, `panic = "abort"` | exit code `0xC0000409`; no stdout or stderr output on either subsystem |
 | Forwarding | `Command::new(&target).args(skip(1)).status()` | target must be `.exe`; `.bat` is re-parsed by cmd |
 | Exit code | `process::exit(status.code().unwrap())` | `code()` is always `Some` on Windows |
 | Ctrl+C | `SetConsoleCtrlHandler(handler, 1)` returning TRUE | the shim does not die early; the child shares the console |
@@ -55,7 +55,7 @@ runtime is left with `read_link` and `spawn`.
   bin\                          the only directory that goes on PATH
     jig.exe                     optional
     <name>.exe                  hard link to one template (copy if linking fails)
-    .ref\
+    _ref\
       <name>.exe                absolute symlink -> the real program
 ```
 
@@ -86,7 +86,7 @@ them from the embedded copy.
 
 Three non-negotiables:
 
-1. A shim reads `<its own directory>\.ref\<its own file name>` and nothing else.
+1. A shim reads `<its own directory>\_ref\<its own file name>` and nothing else.
 2. That entry must reach a final executable without forming a cycle.
 3. `bin\` is the single PATH entry; no recursion, no extra directories.
 
@@ -111,7 +111,7 @@ Three non-negotiables:
 ## 4. Root resolution
 
 `jig` never treats its own directory as the root. Package managers install tools wherever
-they like, and silently adopting that location would scatter `bin\`, `.ref\` and `shim.db`
+they like, and silently adopting that location would scatter `bin\`, `_ref\` and `shim.db`
 into a tree `jig` does not own.
 
 Resolution order, first match wins:
@@ -163,14 +163,14 @@ string, and never mixed with warnings on stdout.
 | 1 | validate every requested name (target name plus aliases), reject case-insensitive duplicates | exit 3 |
 | 2 | resolve the target with `filepath.EvalSymlinks` | `ENOENT` -> exit 3; a path that does not exist is never accepted |
 | 3 | inspect the target: regular file -> `.exe` -> PE -> machine -> subsystem | exit 3 |
-| 4 | cycle detection: a target inside `bin\` or `.ref\` means `a -> b -> a` | exit 3 |
-| 5 | reject a target inside `templates\` (replays the same forward; `templates\.ref` does not exist) | exit 3 |
+| 4 | cycle detection: a target inside `bin\` or `_ref\` means `a -> b -> a` | exit 3 |
+| 5 | reject a target inside `templates\` (replays the same forward; `templates\_ref` does not exist) | exit 3 |
 | 6 | create the skeleton and the root marker | exit 1 |
 | 7 | write the chosen template to `templates\` if the digest differs | exit 1 |
 | 8 | take the lock | exit 5 |
 | 9 | per name: refuse to replace a `bin\<name>.exe` whose digest matches no template (`--force` overrides) | exit 3 |
 | 10 | per name: check for an existing entry with the same target (idempotent) or a different one (`--force`) | exit 3 |
-| 11 | per name: create `.ref\<name>.exe.tmp.<rand>`, then `os.Rename` onto `.ref\<name>.exe` | exit 1 |
+| 11 | per name: create `_ref\<name>.exe.tmp.<rand>`, then `os.Rename` onto `_ref\<name>.exe` | exit 1 |
 | 12 | per name: link the template into `bin\<name>.exe` (copy when linking fails) | exit 1 |
 | 13 | per name: append the manifest record | exit 1 |
 
@@ -181,7 +181,7 @@ first. Removal reverses this (section 9).
 Step 9 exists because `bin\` may be shared with another package manager, and the same rule
 governs all three commands: a file whose digest matches no template is not jig's. `check`
 reports it as `foreign` and never deletes it, `rm` refuses to delete it, and `add` refuses
-to replace it. The check runs before `.ref` is touched, so a refusal cannot leave a
+to replace it. The check runs before `_ref` is touched, so a refusal cannot leave a
 half-written entry behind - the tree is byte-identical afterwards.
 
 Every rename uses `os.Rename`, which is `MoveFileExW(MOVEFILE_REPLACE_EXISTING)` on
@@ -208,8 +208,9 @@ and the temporary name always contains `.tmp.` so `check` and `gc` can recognise
 `.exe` (or `.bat`/`.cmd` with `--allow-script`). A name without `.exe` is rejected because
 `resolve_exe` would try `<name>.exe` first and could quietly launch a neighbour.
 
-For `.exe`, the PE header must parse, the machine must be known (x86, x64, arm64), and the
-subsystem must be 2 (GUI) or 3 (console). Anything else has no template to use.
+For `.exe`, the PE header must parse, the machine must be x86 or x64, and the
+subsystem must be 2 (GUI) or 3 (console). arm64 is rejected: the embedded shim is
+x64, so such a target would fail to start.
 
 ### 7.3 Template selection
 
@@ -218,7 +219,7 @@ console: `std` wraps it in `cmd.exe`, so it needs a console anyway.
 
 ### 7.4 Cycle detection
 
-A target that resolves inside `bin\` or `.ref\` is refused. The upstream runtime has no
+A target that resolves inside `bin\`, `_ref\`, or `templates\` is refused. The upstream runtime has no
 recursion guard, so a chain `a -> b -> a` would spawn processes until an external limit
 kills them, roughly 50 ms per hop with a command line that grows at every level.
 
@@ -234,13 +235,13 @@ reported rather than silently truncated.
 | --- | --- | --- |
 | `missing` | named on the command line, exists nowhere | no |
 | `stale` | manifest record, neither file on disk | drop the record |
-| `orphan` | shim with no `.ref` entry, **digest matches a template** | remove it |
+| `orphan` | shim with no `_ref` entry, **digest matches a template** | remove it |
 | `foreign` | executable in `bin` whose digest matches no template | **never touched** |
-| `half` | `.ref` entry, no shim | remove the entry |
-| `not-symlink` | `.ref` entry is not a symlink | no |
+| `half` | `_ref` entry, no shim | remove the entry |
+| `not-symlink` | `_ref` entry is not a symlink | no |
 | `dangling` | link target is gone | no |
-| `cycle` | target resolves inside the shim directory | no |
-| `relative` | relative link; depends on the shape of `.ref` | rewrite as absolute |
+| `cycle` | target resolves inside `bin\`, `_ref\`, or `templates\` | no |
+| `relative` | relative link; depends on the shape of `_ref` | rewrite as absolute |
 | `not-pe` | target is not a PE image | no |
 | `template` | shim differs from its template | relink from the template |
 | `tmp` | leftover `.tmp.` file | delete it |
@@ -251,6 +252,9 @@ reported rather than silently truncated.
 whoever put the file there, and deleting it would be data loss - which matters because
 `bin` may be shared with another package manager.
 
+After a template upgrade, an orphan from the previous version matches no current template
+and is classified as `foreign`; it is kept, because the bytes no longer prove ownership.
+
 `jig.exe` itself is excluded from the inventory by name, so `jig check --fix` can never
 remove the running manager. Adding a shim under the running executable's own path is
 refused for the same reason.
@@ -260,7 +264,7 @@ conclusion.
 
 ## 9. Removal
 
-Reverse order: remove `bin\<name>.exe`, then unlink `.ref\<name>.exe`, then append the
+Reverse order: remove `bin\<name>.exe`, then unlink `_ref\<name>.exe`, then append the
 record. An interruption leaves a tree that is not runnable but structurally complete, which
 `check` classifies as `half`.
 
@@ -279,6 +283,8 @@ file is no longer `jig`'s to delete.
   do" and exits 0.
 - Every file write goes through `writeAtomic`; every link goes through a temporary name
   plus rename.
+- Windows refuses to replace an image that is running, so a template refresh or relink
+  fails cleanly while any shim is mapped; rerunning after those processes exit completes it.
 - The lock covers mutation only. `ls`, `which` and `check` read without it - a stale read
   is preferable to blocking a diagnostic command behind a hung writer.
 
@@ -301,6 +307,7 @@ is a hard error naming the line number - a half-understood manifest is worse tha
 - No PATH editing; `path` only prints the directory.
 - No version management of the targets, no update checks.
 - No shim for directories or for anything without an `.exe` extension.
+- No arm64 targets: the embedded shim is x64, so such a shim would fail at launch.
 
 ## 13. Embedding upstream artifacts
 
@@ -324,7 +331,7 @@ Each item was executed against a real tree; `[x]` means observed, not assumed.
 | --- | --- | --- |
 | 1 | `jig version` without a root | prints digests, exit 0 |
 | 2 | `jig ls` in a tree with no marker | exit 2, names all three sources tried |
-| 3 | `jig init --root <new>` | creates `.jig-root`, `bin\.ref`, `templates` |
+| 3 | `jig init --root <new>` | creates `.jig-root`, `bin\_ref`, `templates` |
 | 4 | `jig add` run from `<root>\bin` without a flag | marker found, works |
 | 5 | shim execution | forwards argv, exit code and stdout |
 | 6 | GUI target | `wshim-w.exe` shim, subsystem `gui` |
@@ -335,8 +342,8 @@ Each item was executed against a real tree; `[x]` means observed, not assumed.
 | 11 | `add` a target inside `bin` | exit 3, cycle refused |
 | 12 | `rm` an unregistered name | exit 3, nothing deleted |
 | 13 | foreign executable in `bin` | `warn foreign`, never deleted by `--fix` |
-| 13b | `add` onto a name a foreign executable occupies | exit 3, file and `.ref` untouched; `--force` replaces |
-| 14 | relative `.ref` entry | `warn relative`, `--fix` rewrites absolute, shim still runs |
+| 13b | `add` onto a name a foreign executable occupies | exit 3, file and `_ref` untouched; `--force` replaces |
+| 14 | relative `_ref` entry | `warn relative`, `--fix` rewrites absolute, shim still runs |
 | 15 | `jig.exe` inside `bin` | absent from `check` output, survives `--fix` |
 | 16 | `--root` vs `$JIG_ROOT` | `--root` wins |
 | 17 | `check` on a healthy tree | exit 0 |
@@ -344,3 +351,5 @@ Each item was executed against a real tree; `[x]` means observed, not assumed.
 | 19 | a shim after `add` | same file index as its template, still runs |
 | 19b | template truncated in place | every shim reported, `--fix` restores and relinks them |
 | 20 | `add` at the 1024-link ceiling | template rolls to a new inode, shim is still a link |
+| 21 | `add` a shim template as the target | exit 3, cycle refused |
+| 22 | `add` an unchanged entry twice | no new manifest event |

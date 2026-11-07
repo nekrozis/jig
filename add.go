@@ -61,7 +61,7 @@ func cmdAdd(l layout, args []string) error {
 			stripLong(target))
 	}
 	// Pointing at a template just replays the same forward once more; it also
-	// cannot work, because templates\.ref does not exist.
+	// cannot work, because templates\_ref does not exist.
 	if within(l.tpl(), target) {
 		return fail(exitInvalid, "target is a shim template, not a runnable program: %s",
 			stripLong(target))
@@ -82,10 +82,16 @@ func cmdAdd(l layout, args []string) error {
 	}
 	defer unlock()
 
+	st, _, err := l.loadState()
+	if err != nil {
+		return err
+	}
+
 	var firstErr error
 	failed := 0
 	for _, name := range names {
-		if err := addOne(l, name, target, subsystem, force); err != nil {
+		_, registered := st.lookup(name)
+		if err := addOne(l, name, target, subsystem, force, registered); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %s: %v\n", name, err)
 			failed++
 			if firstErr == nil {
@@ -102,10 +108,10 @@ func cmdAdd(l layout, args []string) error {
 	return already(exitPartial)
 }
 
-// addOne must keep this order: .ref first, bin second. The moment
+// addOne must keep this order: _ref first, bin second. The moment
 // bin\<name>.exe becomes visible the user can invoke it, so "visible" has to
 // mean "usable".
-func addOne(l layout, name, target string, subsystem uint16, force bool) error {
+func addOne(l layout, name, target string, subsystem uint16, force bool, registered bool) error {
 	entry := l.entry(name)
 	binPath := l.shim(name)
 	linkOK := false
@@ -128,7 +134,7 @@ func addOne(l layout, name, target string, subsystem uint16, force bool) error {
 	// A file under bin that jig never wrote belongs to whoever put it there.
 	// bin is allowed to be shared with another package manager, so replacing it
 	// silently would destroy someone else's shim: the same reasoning that makes
-	// check leave such a file alone and rm refuse it. Checked before the .ref
+	// check leave such a file alone and rm refuse it. Checked before the _ref
 	// write so a refusal leaves nothing behind.
 	if got, err := fileSHA256(binPath); err == nil && !isShimBytes(got) && !force {
 		return fail(exitInvalid,
@@ -140,7 +146,11 @@ func addOne(l layout, name, target string, subsystem uint16, force bool) error {
 		if cur, err := resolveFinal(entry); err == nil && samePath(cur, target) {
 			linkOK = true
 		} else if !force {
-			cur, _ := os.Readlink(entry)
+			cur, err := os.Readlink(entry)
+			if err != nil {
+				return fail(exitInvalid,
+					"%s exists but is not a symlink; use --force to replace it", stripLong(entry))
+			}
 			return fail(exitInvalid, "%s already points at %s (use --force to replace)", name, cur)
 		}
 	}
@@ -168,6 +178,11 @@ func addOne(l layout, name, target string, subsystem uint16, force bool) error {
 		}
 	}
 
+	if linkOK && got == want && registered {
+		fmt.Printf("%s: already points at %s, nothing to do\n", name, stripLong(target))
+		return nil
+	}
+
 	r := newRecord("add", name)
 	r.Target = stripLong(target)
 	r.Link = "symlink"
@@ -177,11 +192,7 @@ func addOne(l layout, name, target string, subsystem uint16, force bool) error {
 		return err
 	}
 
-	if linkOK {
-		fmt.Printf("%s: already points at %s, nothing to do\n", name, stripLong(target))
-	} else {
-		fmt.Printf("added %s -> %s [%s]\n", name, stripLong(target), subsystemName(subsystem))
-	}
+	fmt.Printf("added %s -> %s [%s]\n", name, stripLong(target), subsystemName(subsystem))
 	return nil
 }
 
@@ -225,6 +236,11 @@ func inspectTarget(raw string, allowScript bool) (string, uint16, error) {
 	h, err := readPE(final)
 	if err != nil {
 		return "", 0, fail(exitInvalid, "%s: %v", stripLong(final), err)
+	}
+	if h.Machine == 0xaa64 {
+		return "", 0, fail(exitInvalid,
+			"arm64 target is not supported: the embedded shim is x64 and would fail to start: %s",
+			stripLong(final))
 	}
 	if _, ok := machineNames[h.Machine]; !ok {
 		return "", 0, fail(exitInvalid, "unsupported machine 0x%04X: %s", h.Machine, stripLong(final))

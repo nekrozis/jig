@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 )
 
@@ -40,7 +41,7 @@ func cmdWhich(l layout, args []string) error {
 	s := probeName(l, name)
 	switch {
 	case !s.HasRef:
-		return fail(exitInvalid, "%s: no entry under .ref", name)
+		return fail(exitInvalid, "%s: no entry under _ref", name)
 	case s.LinkErr != nil:
 		return fail(exitInvalid, "%s: entry is not a symlink (%v)", name, s.LinkErr)
 	case s.FinalErr != nil:
@@ -79,51 +80,19 @@ func cmdGc(l layout, args []string) error {
 		}
 	}
 
-	st, events, err := l.loadState()
-	if err != nil {
-		return err
-	}
-
-	var plan []string
-	var tmpFiles []string
-	for _, dir := range []string{l.bin(), l.ref(), l.tpl()} {
-		for _, n := range listTemps(dir) {
-			tmpFiles = append(tmpFiles, filepath.Join(dir, n))
-		}
-	}
-	for _, p := range tmpFiles {
-		plan = append(plan, "remove leftover temporary file "+p)
-	}
-
-	var stale []string
-	for _, r := range st {
-		if _, err := os.Lstat(l.shim(r.Name)); err != nil {
-			if _, err := os.Lstat(l.entry(r.Name)); err != nil {
-				stale = append(stale, r.Name)
-			}
-		}
-	}
-	for _, n := range stale {
-		plan = append(plan, "drop stale manifest record "+n)
-	}
-
-	size := int64(0)
-	if info, err := os.Stat(l.db()); err == nil {
-		size = info.Size()
-	}
-	needCompact := events > 2000 || size > 1<<20
-	if needCompact {
-		plan = append(plan, fmt.Sprintf("compact shim.db (%d events, %d bytes)", events, size))
-	}
-
-	if len(plan) == 0 {
-		fmt.Println("nothing to do")
-		return nil
-	}
-	for _, p := range plan {
-		fmt.Println("  " + p)
-	}
 	if !apply {
+		st, events, err := l.loadState()
+		if err != nil {
+			return err
+		}
+		plan, _, _, _ := planGc(l, st, events)
+		if len(plan) == 0 {
+			fmt.Println("nothing to do")
+			return nil
+		}
+		for _, p := range plan {
+			fmt.Println("  " + p)
+		}
 		fmt.Println("(dry run, nothing changed; add --apply to execute)")
 		return nil
 	}
@@ -133,6 +102,22 @@ func cmdGc(l layout, args []string) error {
 		return err
 	}
 	defer unlock()
+
+	// Compute the plan under the lock. Listing before acquiring it could
+	// delete a temporary file another add is about to rename, or drop a
+	// record that was written in between.
+	st, events, err := l.loadState()
+	if err != nil {
+		return err
+	}
+	plan, tmpFiles, stale, needCompact := planGc(l, st, events)
+	if len(plan) == 0 {
+		fmt.Println("nothing to do")
+		return nil
+	}
+	for _, p := range plan {
+		fmt.Println("  " + p)
+	}
 
 	for _, p := range tmpFiles {
 		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
@@ -155,6 +140,40 @@ func cmdGc(l layout, args []string) error {
 	}
 	fmt.Printf("done: %d item(s)\n", len(plan))
 	return nil
+}
+
+func planGc(l layout, st state, events int) (plan, tmpFiles, stale []string, needCompact bool) {
+	for _, dir := range []string{l.bin(), l.ref(), l.tpl()} {
+		for _, n := range listTemps(dir) {
+			tmpFiles = append(tmpFiles, filepath.Join(dir, n))
+		}
+	}
+	sort.Strings(tmpFiles)
+	for _, p := range tmpFiles {
+		plan = append(plan, "remove leftover temporary file "+p)
+	}
+
+	for _, r := range st {
+		if _, err := os.Lstat(l.shim(r.Name)); err != nil {
+			if _, err := os.Lstat(l.entry(r.Name)); err != nil {
+				stale = append(stale, r.Name)
+			}
+		}
+	}
+	sort.Strings(stale)
+	for _, n := range stale {
+		plan = append(plan, "drop stale manifest record "+n)
+	}
+
+	size := int64(0)
+	if info, err := os.Stat(l.db()); err == nil {
+		size = info.Size()
+	}
+	needCompact = events > 2000 || size > 1<<20
+	if needCompact {
+		plan = append(plan, fmt.Sprintf("compact shim.db (%d events, %d bytes)", events, size))
+	}
+	return plan, tmpFiles, stale, needCompact
 }
 
 // cmdInit creates the skeleton and writes both templates. It deliberately

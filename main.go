@@ -1,6 +1,6 @@
 // jig - install-time manager for wshim shims.
 //
-// It does one thing: maintain <root>\bin and <root>\bin\.ref so that a running
+// It does one thing: maintain <root>\bin and <root>\bin\_ref so that a running
 // shim is left with exactly two statements, read_link and spawn. Every part of
 // the contract is therefore validated here, at install time; a violation at
 // runtime is a process abort, not a readable error.
@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	version = "0.3.0"
+	version = "0.4.0"
 )
 
 const (

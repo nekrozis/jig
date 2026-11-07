@@ -77,7 +77,7 @@ func rmOne(l layout, st state, name string, force bool) error {
 		}
 	}
 
-	// The order is the reverse of creation: remove bin first, unlink .ref
+	// The order is the reverse of creation: remove bin first, unlink _ref
 	// second. An interruption leaves a state that is not runnable but is
 	// structurally complete, which check can recognise.
 	if err := os.Remove(binPath); err != nil && !errors.Is(err, os.ErrNotExist) {
