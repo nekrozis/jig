@@ -15,10 +15,10 @@ import (
 // digests to a tag, a commit, and a GitHub-hosted workflow run.
 //
 //	repo     github.com/nekrozis/wshim
-//	tag      v0.3.0
-//	commit   2a652f9222d9b5d3978a57c5025dd052bf30e98a
-//	workflow .github/workflows/release-build.yml @ refs/tags/v0.3.0
-//	run      https://github.com/nekrozis/wshim/actions/runs/42358215591
+//	tag      v0.3.1
+//	commit   c7e7c0a26b386e3177c45aa790c6d5e4cc95ab5c
+//	workflow .github/workflows/release-build.yml @ refs/tags/v0.3.1
+//	run      https://github.com/nekrozis/wshim/actions/runs/43689359575
 //
 // The digests below are pinned in source on purpose: an embedded blob that no
 // longer matches them means the build picked up the wrong file, and that must
@@ -26,11 +26,11 @@ import (
 // somewhere unexpected.
 const (
 	upstreamRepo   = "nekrozis/wshim"
-	upstreamTag    = "v0.3.0"
-	upstreamCommit = "2a652f9222d9b5d3978a57c5025dd052bf30e98a"
+	upstreamTag    = "v0.3.1"
+	upstreamCommit = "c7e7c0a26b386e3177c45aa790c6d5e4cc95ab5c"
 
-	sumCUI = "4b2cb490278bd226a92a2c40eb705464edc3c08ab536a969f24c3cb1899f7ce7"
-	sumGUI = "a2943cc4a280512fbdc605ae69cdce5cac10c657d9d056cde522bb19751183c3"
+	sumCUI = "7d4252e27de3896237c37a61f08acbd98a30ab09ab6da0a1c232ee65133ed0e1"
+	sumGUI = "a1d6be953f69b2c781a39e71272a02866f5a868939b79ddac1a5afed6c8ca314"
 )
 
 //go:embed assets/wshim-c.exe

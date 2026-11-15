@@ -3,9 +3,9 @@
 > Companion to the runtime layer `github.com/nekrozis/wshim`. This document covers the
 > **install-time** tool only.
 >
-> Version: 2026-11-07, v5 (wshim 0.3.0 templates, _ref directory).
-> Runtime: `nekrozis/wshim` **v0.3.0**, tag `v0.3.0`, commit
-> `2a652f9222d9b5d3978a57c5025dd052bf30e98a` (`src/lib.rs` + `src/ctrl.rs`).
+> Version: 2026-11-15, v6 (wshim 0.3.1 templates).
+> Runtime: `nekrozis/wshim` **v0.3.1**, tag `v0.3.1`, commit
+> `c7e7c0a26b386e3177c45aa790c6d5e4cc95ab5c` (`src/lib.rs` + `src/ctrl.rs`).
 
 ## 0. Fixed behaviour of the embedded template
 
@@ -34,7 +34,7 @@ A contract violation is a silent abort, not an error message. Therefore:
 | --- | --- |
 | Role | the only program allowed to create, modify or delete shim structure |
 | When it runs | install, upgrade, uninstall, troubleshooting. **Never on the forwarding path** |
-| Language | Go 1.27.3+, standard library only (`syscall` only for `CreateFileW` locking) |
+| Language | Go 1.27.4+, standard library only (`syscall` only for `CreateFileW` locking) |
 | Distribution | one `jig.exe`; `go:embed` carries both templates (3.8 MB total) |
 | Root | `--root` > `$JIG_ROOT` > nearest `.jig-root` marker above `jig.exe` |
 | Not done | PATH editing, registry writes, version management, running anything |

@@ -20,7 +20,7 @@ git --version          :: now goes through <root>\bin\git.exe
 ## The binaries are upstream, unmodified
 
 `jig` embeds the official `wshim-c.exe` and `wshim-w.exe` from
-[`nekrozis/wshim` **v0.3.0**](https://github.com/nekrozis/wshim/releases/tag/v0.3.0)
+[`nekrozis/wshim` **v0.3.1**](https://github.com/nekrozis/wshim/releases/tag/v0.3.1)
 verbatim. It does not build them.
 
 The reason is provenance, not convenience. A locally compiled Rust/MSVC binary is a byte
@@ -31,8 +31,8 @@ GitHub-hosted workflow run, so anyone can verify where the code came from.
 
 | file | size | sha256 |
 | --- | --- | --- |
-| `wshim-c.exe` | 310784 | `4b2cb490278bd226a92a2c40eb705464edc3c08ab536a969f24c3cb1899f7ce7` |
-| `wshim-w.exe` | 310784 | `a2943cc4a280512fbdc605ae69cdce5cac10c657d9d056cde522bb19751183c3` |
+| `wshim-c.exe` | 314368 | `7d4252e27de3896237c37a61f08acbd98a30ab09ab6da0a1c232ee65133ed0e1` |
+| `wshim-w.exe` | 314368 | `a1d6be953f69b2c781a39e71272a02866f5a868939b79ddac1a5afed6c8ca314` |
 
 The digests are pinned in `asset.go` and re-checked on every start, so a build that picked
 up the wrong file fails immediately instead of producing shims that forward somewhere
@@ -43,10 +43,10 @@ toolchain, linker, flags), kept verbatim so the provenance can be audited offlin
 
 ```console
 $ jig version
-jig 0.1.0 (go1.27.3)
-templates from nekrozis/wshim v0.3.0 (2a652f9222d9)
-  wshim-c.exe  sha256=4b2cb490...9f7ce7  size=310784  subsystem=3
-  wshim-w.exe  sha256=a2943cc4...51183c3  size=310784  subsystem=2
+jig 0.1.1 (go1.27.4)
+templates from nekrozis/wshim v0.3.1 (c7e7c0a26b38)
+  wshim-c.exe  sha256=7d4252e2...33ed0e1  size=314368  subsystem=3
+  wshim-w.exe  sha256=a1d6be95...c8ca314  size=314368  subsystem=2
 ```
 
 Compare those two digests with `sha256.txt` on the upstream release. That is the only
@@ -57,8 +57,8 @@ To check the release itself:
 ```console
 $ gh attestation verify wshim-c.exe --repo nekrozis/wshim \
     --signer-workflow nekrozis/wshim/.github/workflows/release-build.yml \
-    --source-digest 2a652f9222d9b5d3978a57c5025dd052bf30e98a \
-    --source-ref refs/tags/v0.3.0
+    --source-digest c7e7c0a26b386e3177c45aa790c6d5e4cc95ab5c \
+    --source-ref refs/tags/v0.3.1
 ```
 
 ## Install
@@ -233,7 +233,7 @@ point: the pinned digests are a compile-time contract, not a runtime guess.
 $ go build -trimpath -ldflags "-s -w" -o jig.exe .
 ```
 
-No external modules. `go 1.27.3` or newer.
+No external modules. `go 1.27.4` or newer.
 
 ## Non-goals
 
