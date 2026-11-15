@@ -75,6 +75,30 @@ user value, duplicates entries, and truncates at 1024 characters.
 `init` writes the skeleton and both templates, and plants a `.jig-root` marker. `jig.exe`
 can live anywhere, including inside `<root>\bin`.
 
+## Upgrade
+
+Install the new `jig.exe` over the old one, then let it refresh the templates and relink
+the existing shims:
+
+```console
+$ jig check --fix
+```
+
+Close any running shim first: Windows cannot replace an image that is in use, and the
+refresh fails cleanly rather than leaving a half-written template. `check --fix` rewrites
+`templates\` from the embedded copy and relinks every shim whose bytes no longer match its
+template. Replacing `jig.exe` alone is not enough - the old shims keep pointing at the old
+template - and `jig init` only refreshes `templates\`, without touching the shims.
+
+Do not pass `--root` just to run the upgrade: the root is already known from `$JIG_ROOT`
+or from the marker above `jig.exe`. Pass it only when `jig` reports that it cannot find
+the root.
+
+```console
+$ jig version
+$ jig check
+```
+
 ## Where the root comes from
 
 `jig` never assumes its own directory is the root. Package managers install tools wherever
